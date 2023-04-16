@@ -515,6 +515,7 @@ export class BreakpointManager {
     // it doesn't exist, they were probably from a previous section. The
     // references for scripts just auto-increment per session and are entirely
     // ephemeral. Remove the reference so that we fall back to a path if possible.
+    // .source tries to get the Source Object by reference first and then by path
     const containedSource = this._sourceContainer.source(params.source);
     if (
       params.source.sourceReference /* not (undefined or 0=on disk) */ &&
@@ -630,6 +631,7 @@ export class BreakpointManager {
         result.new
           .filter(this._enabledFilter)
           .filter(bp => currentList?.includes(bp))
+          // .enable sets breakpoints via cdp
           .map(b => b.enable(thread)),
       );
 

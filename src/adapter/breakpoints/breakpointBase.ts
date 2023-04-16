@@ -8,11 +8,11 @@ import { absolutePathToFileUrl, urlToRegex } from '../../common/urlUtils';
 import Dap from '../../dap/api';
 import { BreakpointManager } from '../breakpoints';
 import {
-  base1To0,
   ISourceScript,
   IUiLocation,
   Source,
   SourceFromMap,
+  base1To0,
   uiToRawOffset,
 } from '../sources';
 import { Script, Thread } from '../threads';
@@ -202,6 +202,7 @@ export abstract class Breakpoint {
 
     // double check still enabled to avoid racing
     if (source && this.isEnabled) {
+      // .currentSiblingUiLocations uses sourcemaps to find location in compiled files
       const uiLocations = this._manager._sourceContainer.currentSiblingUiLocations({
         lineNumber: this.originalPosition.lineNumber,
         columnNumber: this.originalPosition.columnNumber,
@@ -294,7 +295,7 @@ export abstract class Breakpoint {
     }
 
     // Find all locations for this breakpoint in the new script.
-    const uiLocations = this._manager._sourceContainer.currentSiblingUiLocations(
+    const uiLocations = this._manager._sourceContainer.getCompiledLocationsFromSource(
       {
         lineNumber: this.originalPosition.lineNumber,
         columnNumber: this.originalPosition.columnNumber,
@@ -479,10 +480,11 @@ export abstract class Breakpoint {
     }
 
     if (this.source.path) {
-      const urlRegexp =
+      let urlRegexp =
         await this._manager._sourceContainer.sourcePathResolver.absolutePathToUrlRegexp(
           this.source.path,
         );
+      urlRegexp = urlRegexp?.replace('($|?)', '');
       if (!urlRegexp) {
         return;
       }
@@ -613,6 +615,8 @@ export abstract class Breakpoint {
       args,
       deadletter: false,
     };
+
+    //TODO: sourcemap using breakpoints
 
     state.done = (async () => {
       const result = isSetByLocation(args)

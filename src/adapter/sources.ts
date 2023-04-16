@@ -182,7 +182,7 @@ export class Source {
     );
   }
 
-  private setSourceMapUrl(sourceMapUrl?: string) {
+  public setSourceMapUrl(sourceMapUrl?: string) {
     if (!sourceMapUrl) {
       this.sourceMap = undefined;
       return;
@@ -641,6 +641,10 @@ export class SourceContainer {
     return this.scriptsById.get(scriptId);
   }
 
+  public getSourceByAbsolutePath(absolutePath: string) {
+    return this._sourceByAbsolutePath.get(absolutePath);
+  }
+
   /**
    * Gets a source by its original URL from the debugger.
    */
@@ -761,7 +765,7 @@ export class SourceContainer {
   /**
    * Returns all UI locations the given location maps to.
    */
-  private getSourceMapUiLocations(uiLocation: IUiLocation): IUiLocation[] {
+  public getSourceMapUiLocations(uiLocation: IUiLocation): IUiLocation[] {
     if (!isSourceWithMap(uiLocation.source) || !this._doSourceMappedStepping) return [];
     const map = this._sourceMaps.get(uiLocation.source.sourceMap.url)?.map;
     if (!map) return [];
@@ -814,13 +818,29 @@ export class SourceContainer {
     };
   }
 
+  public getCompiledLocationsFromSource(uiLocation: IUiLocation, inSource?: Source) {
+    return this.getCompiledLocations(uiLocation).filter(
+      uiLocation => !inSource || uiLocation.source === inSource,
+    );
+  }
+
   private getCompiledLocations(uiLocation: IUiLocation): IUiLocation[] {
-    if (!(uiLocation.source instanceof SourceFromMap)) {
+    let source: Source | undefined = uiLocation.source;
+    if (!(source instanceof SourceFromMap)) {
+      // 'file:///C:/Users/Kerim/coding/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test.ts'
+      source = this._sourceMapSourcesByUrl.get(
+        utils.absolutePathToFileUrl(uiLocation.source.absolutePath),
+      );
+      if (source) {
+        console.log('found SourceFromMap by path');
+      }
+    }
+    if (!(source instanceof SourceFromMap)) {
       return [];
     }
 
     let output: IUiLocation[] = [];
-    for (const [compiled, sourceUrl] of uiLocation.source.compiledToSourceUrl) {
+    for (const [compiled, sourceUrl] of source.compiledToSourceUrl) {
       const sourceMap = this._sourceMaps.get(compiled.sourceMap.url);
       if (!sourceMap || !sourceMap.map) {
         continue;
@@ -851,7 +871,7 @@ export class SourceContainer {
         source: compiled,
       };
 
-      output = output.concat(compiledUiLocation, this.getCompiledLocations(compiledUiLocation));
+      output = output.concat(compiledUiLocation); //, this.getCompiledLocations(compiledUiLocation));
     }
 
     return output;
@@ -945,11 +965,12 @@ export class SourceContainer {
     const existingByPath = this._sourceByAbsolutePath.get(source.absolutePath);
     if (
       existingByPath === undefined ||
-      existingByPath.url.length >= source.url.length ||
+      existingByPath.url.length > source.url.length ||
       isOriginalSourceOf(existingByPath, source)
     ) {
       this._sourceByAbsolutePath.set(source.absolutePath, source);
     }
+    this._sourceByAbsolutePath.set(source.absolutePath, source);
 
     this.scriptSkipper.initializeSkippingValueForSource(source);
     source.toDap().then(dap => this._dap.loadedSource({ reason: 'new', source: dap }));
