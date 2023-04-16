@@ -35,6 +35,7 @@ import { IExceptionPauseService } from './exceptionPauseService';
 import * as objectPreview from './objectPreview';
 import { PreviewContextType, getContextForType } from './objectPreview/contexts';
 import { SmartStepper } from './smartStepping';
+
 import {
   IPreferredUiLocation,
   ISourceWithMap,
@@ -1185,10 +1186,10 @@ export class Thread implements IVariableStoreLocationProvider {
     const hitAnyBreakpoint = !!(event.hitBreakpoints && event.hitBreakpoints.length);
     if (hitAnyBreakpoint || !sameDebuggingSequence) this._sourceContainer.clearDisabledSourceMaps();
 
-    if (event.hitBreakpoints && this._sourceMapDisabler) {
-      for (const sourceToDisable of this._sourceMapDisabler(event.hitBreakpoints))
-        this._sourceContainer.disableSourceMapForSource(sourceToDisable);
-    }
+    // if (event.hitBreakpoints && this._sourceMapDisabler) {
+    //   for (const sourceToDisable of this._sourceMapDisabler(event.hitBreakpoints))
+    //     this._sourceContainer.disableSourceMapForSource(sourceToDisable);
+    // }
 
     const stackTrace = StackTrace.fromDebugger(
       this,
@@ -1435,6 +1436,35 @@ export class Thread implements IVariableStoreLocationProvider {
         return prevSource;
       }
 
+      let resolvedSourceMapUrl: string | undefined;
+      if (event.sourceMapURL) {
+        // Note: we should in theory refetch source maps with relative urls, if the base url has changed,
+        // but in practice that usually means new scripts with new source maps anyway.
+        resolvedSourceMapUrl = urlUtils.isDataUri(event.sourceMapURL)
+          ? event.sourceMapURL
+          : (event.url && urlUtils.completeUrl(event.url, event.sourceMapURL)) || event.url;
+        if (!resolvedSourceMapUrl) {
+          this._dap.with(dap =>
+            errors.reportToConsole(dap, `Could not load source map from ${event.sourceMapURL}`),
+          );
+        }
+      }
+
+      // const absolutePath = await this._sourceContainer.sourcePathResolver.urlToAbsolutePath({ url: event.url });
+      // if(absolutePath){
+      //   const mappedSource = this._sourceContainer.getSourceByAbsolutePath(absolutePath)
+      //   if(mappedSource) {
+      //     if(resolvedSourceMapUrl){
+      //       mappedSource.setSourceMapUrl(resolvedSourceMapUrl)
+      //     }
+      //     mappedSource.addScript({
+      //       scriptId: event.scriptId,
+      //       url: event.url,
+      //       executionContextId: event.executionContextId,
+      //     });
+      //     // return mappedSource
+      //   }
+      // }
       const contentGetter = async () => {
         const response = await this._cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
         return response ? response.scriptSource : undefined;
@@ -1449,20 +1479,6 @@ export class Thread implements IVariableStoreLocationProvider {
       const runtimeScriptOffset = event.url.endsWith('#vscode-extension')
         ? { lineOffset: 2, columnOffset: 0 }
         : undefined;
-
-      let resolvedSourceMapUrl: string | undefined;
-      if (event.sourceMapURL) {
-        // Note: we should in theory refetch source maps with relative urls, if the base url has changed,
-        // but in practice that usually means new scripts with new source maps anyway.
-        resolvedSourceMapUrl = urlUtils.isDataUri(event.sourceMapURL)
-          ? event.sourceMapURL
-          : (event.url && urlUtils.completeUrl(event.url, event.sourceMapURL)) || event.url;
-        if (!resolvedSourceMapUrl) {
-          this._dap.with(dap =>
-            errors.reportToConsole(dap, `Could not load source map from ${event.sourceMapURL}`),
-          );
-        }
-      }
 
       const source = await this._sourceContainer.addSource(
         event.url,
