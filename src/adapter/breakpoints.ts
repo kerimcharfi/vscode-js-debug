@@ -516,7 +516,13 @@ export class BreakpointManager {
     // references for scripts just auto-increment per session and are entirely
     // ephemeral. Remove the reference so that we fall back to a path if possible.
     // .source tries to get the Source Object by reference first and then by path
-    const containedSource = this._sourceContainer.source(params.source);
+
+    let containedSource: Source | undefined = this._sourceContainer.getSourceMapSourcesByUrl(
+      urlUtils.absolutePathToFileUrl(params.source.path ?? ''),
+    );
+    if (!containedSource) {
+      containedSource = this._sourceContainer.source(params.source);
+    }
     if (
       params.source.sourceReference /* not (undefined or 0=on disk) */ &&
       params.source.path &&
@@ -561,7 +567,7 @@ export class BreakpointManager {
           created = new UserDefinedBreakpoint(
             this,
             ids[index],
-            params.source,
+            containedSource ?? params.source,
             bpParams,
             this.conditionFactory.getConditionFor(bpParams),
           );

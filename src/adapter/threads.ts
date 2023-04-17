@@ -1186,10 +1186,10 @@ export class Thread implements IVariableStoreLocationProvider {
     const hitAnyBreakpoint = !!(event.hitBreakpoints && event.hitBreakpoints.length);
     if (hitAnyBreakpoint || !sameDebuggingSequence) this._sourceContainer.clearDisabledSourceMaps();
 
-    // if (event.hitBreakpoints && this._sourceMapDisabler) {
-    //   for (const sourceToDisable of this._sourceMapDisabler(event.hitBreakpoints))
-    //     this._sourceContainer.disableSourceMapForSource(sourceToDisable);
-    // }
+    if (event.hitBreakpoints && this._sourceMapDisabler) {
+      //   for (const sourceToDisable of this._sourceMapDisabler(event.hitBreakpoints))
+      //     this._sourceContainer.disableSourceMapForSource(sourceToDisable);
+    }
 
     const stackTrace = StackTrace.fromDebugger(
       this,
