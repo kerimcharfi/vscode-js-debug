@@ -129,7 +129,7 @@ export class Source {
    */
   private readonly _contentGetter: ContentGetter;
 
-  private readonly _container: SourceContainer;
+  public readonly _container: SourceContainer;
 
   /**
    * Hypothesized absolute path for the source. May or may not actually exist.
@@ -822,6 +822,10 @@ export class SourceContainer {
     return this.getCompiledLocations(uiLocation).filter(
       uiLocation => !inSource || uiLocation.source === inSource,
     );
+  }
+
+  public getSourceMapSourcesByUrl(url: string) {
+    return this._sourceMapSourcesByUrl.get(url);
   }
 
   private getCompiledLocations(uiLocation: IUiLocation): IUiLocation[] {
