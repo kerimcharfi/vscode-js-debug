@@ -22,6 +22,8 @@ import { AnyLaunchConfiguration, IChromiumBaseConfiguration, OutputSource } from
 import Dap from '../dap/api';
 import * as errors from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
+import { WebAssemblyFile } from '../dwarf/core/Source';
+import { DwarfDebugSymbolContainer } from '../dwarf/pkg';
 import { NodeWorkerTarget } from '../targets/node/nodeWorkerTarget';
 import { ITarget } from '../targets/targets';
 import { IShutdownParticipants } from '../ui/shutdownParticipants';
@@ -1390,6 +1392,20 @@ export class Thread implements IVariableStoreLocationProvider {
   }
 
   private _onScriptParsed(event: Cdp.Debugger.ScriptParsedEvent) {
+    if (event.scriptLanguage == 'WebAssembly') {
+      console.error(`Start Loading ${event.url}...`);
+
+      (async () => {
+        const response = await this._cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
+        const buffer = Buffer.from(response?.bytecode || '', 'base64');
+
+        const container = DwarfDebugSymbolContainer.new(new Uint8Array(buffer));
+        const file = new WebAssemblyFile(event.scriptId, container);
+
+        console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
+      })();
+    }
+
     if (event.url.endsWith(sourceUtils.SourceConstants.InternalExtension)) {
       // The customer doesn't care about the internal cdp files, so skip this event
       return;
