@@ -16,7 +16,7 @@ module.exports = {
   rules: {
     // Temporary until CDP is moved out, which is where most violations are:
     '@typescript-eslint/ban-types': 'off',
-
+    '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/no-var-requires': 'off',
     '@typescript-eslint/no-use-before-define': 'off',
     '@typescript-eslint/explicit-function-return-type': 'off',
@@ -39,4 +39,4 @@ module.exports = {
     // Place to specify ESLint rules. Can be used to overwrite rules specified from the extended configs
     // e.g. "@typescript-eslint/explicit-function-return-type": "off",
   },
-};
+}

@@ -1,7 +1,7 @@
 <script>
   import { instantiateWASM } from './wasm';
 
-  import STEP_FILE_TEXT from '@/assets/step-files/basic_nobends.step?raw';
+  // import STEP_FILE_TEXT from '@/assets/step-files/basic_nobends.step?raw';
   // import STEP_FILE_TEXT from "@/assets/step-files/assembly.step?raw"
   import swiftwasmurl from '.build/debug/swiftwasm.wasm?url';
 
@@ -18,7 +18,7 @@
     let exitCode = 'none';
     console.log('running');
     try {
-      foit(string(STEP_FILE_TEXT));
+      foit(string("STEP_FILE_TEXT"));
       exitCode = wasi.start();
     } catch (e) {
       console.error(e);

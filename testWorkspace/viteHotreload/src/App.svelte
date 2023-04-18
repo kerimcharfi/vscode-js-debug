@@ -2,6 +2,9 @@
   import svelteLogo from './assets/svelte.svg'
   import viteLogo from '/vite.svg'
   import Counter from './lib/Counter.svelte'
+  import Swift from './lib/swift/swift.svelte'
+
+  let showSwift = false;
 </script>
 
 <main>
@@ -23,9 +26,14 @@
     Check out <a href="https://github.com/sveltejs/kit#readme" target="_blank" rel="noreferrer">SvelteKit</a>, the official Svelte app framework powered by Vite!
   </p>
 
-  <p class="read-the-docs">
-    Click on the Vite and Svelte logos to learn more
-  </p>
+  <!-- {#if showSwift}
+    <Swift/>
+  {/if} -->
+
+  <Swift/>
+  <button on:click={()=>showSwift=true}>
+    click
+  </button>
 </main>
 
 <style>

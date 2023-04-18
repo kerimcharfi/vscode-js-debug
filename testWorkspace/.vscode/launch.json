@@ -10,6 +10,30 @@
             "name": "Launch Chrome against localhost",
             "url": "http://localhost:5173/",
             "webRoot": "${workspaceFolder}/viteHotreload"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Debug swiftwasm (viteHotreload/src/lib/swift)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift/.build/debug/swiftwasm",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift",
+            "preLaunchTask": "swift: Build Debug swiftwasm (viteHotreload/src/lib/swift)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Release swiftwasm (viteHotreload/src/lib/swift)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift/.build/release/swiftwasm",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift",
+            "preLaunchTask": "swift: Build Release swiftwasm (viteHotreload/src/lib/swift)"
         }
     ]
 }

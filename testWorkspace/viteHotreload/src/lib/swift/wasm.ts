@@ -106,10 +106,10 @@ export async function instantiateWASM(swiftbuf, oc){
         env: {
             // cpp_malloc,
             ...linked_fns,
-            // consolelog,
+            consolelog,
             // cpp_memset,
             // cpp_memget,
-            // debugger: _debugger
+            debugger: _debugger
         }
     }
     );
