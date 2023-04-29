@@ -8,7 +8,7 @@ import { ILogger, LogTag } from '../common/logging';
 import { bisectArray, flatten } from '../common/objUtils';
 import { IPosition } from '../common/positions';
 import { delay } from '../common/promiseUtil';
-import { SourceMap } from '../common/sourceMaps/sourceMap';
+// import { SourceMap } from '../common/sourceMaps/sourceMap';
 import * as urlUtils from '../common/urlUtils';
 import { AnyLaunchConfiguration, IChromiumBaseConfiguration } from '../configuration';
 import Dap from '../dap/api';
@@ -28,15 +28,17 @@ import { DiagnosticToolSuggester } from './diagnosticToolSuggester';
 import {
   ISourceWithMap,
   IUiLocation,
+  ScriptWithSourceMapHandler,
   Source,
   SourceContainer,
+  SourceMap,
   base0To1,
   base1To0,
   isSourceWithMap,
   rawToUiOffset,
   uiToRawOffset,
 } from './sources';
-import { ScriptWithSourceMapHandler, Thread } from './threads';
+import { Thread } from './threads';
 
 /**
  * Differential result used internally in setBreakpoints.
@@ -359,7 +361,7 @@ export class BreakpointManager {
       const { scriptId } = lsrc.scripts[lsrc.scripts.length - 1];
       todo.push(
         thread
-          .cdp()
+          .cdp
           .Debugger.getPossibleBreakpoints({
             restrictToFunction: false,
             start: { scriptId, ...uiToRawOffset(base1To0(start), lsrc.runtimeScriptOffset) },
@@ -396,7 +398,7 @@ export class BreakpointManager {
    */
   public setThread(thread: Thread) {
     this._thread = thread;
-    this._thread.cdp().Debugger.on('breakpointResolved', event => {
+    this._thread.cdp.Debugger.on('breakpointResolved', event => {
       const breakpoint = this._resolvedBreakpoints.get(event.breakpointId);
       if (breakpoint) {
         breakpoint.updateUiLocations(thread, event.breakpointId, [event.location]);

@@ -18,7 +18,7 @@ import { ProtocolError } from '../dap/protocolError';
 import * as objectPreview from './objectPreview';
 import { PreviewContextType } from './objectPreview/contexts';
 import { StackFrame, StackTrace } from './stackTrace';
-import { getSourceSuffix, RemoteException, RemoteObjectId } from './templates';
+import { RemoteException, RemoteObjectId, getSourceSuffix } from './templates';
 import { getArrayProperties } from './templates/getArrayProperties';
 import { getArraySlots } from './templates/getArraySlots';
 import { getStringyProps, getToStringIfCustom } from './templates/getStringyProps';
@@ -962,6 +962,13 @@ class Scope implements IVariableContainer {
         );
       }
     }
+
+    for (const extraProperty of this.ref.stackFrame.locals) {
+        variables.push(
+          this.context.createVariableByType({ name: extraProperty.name }, extraProperty),
+        );
+    }
+
 
     return variables;
   }

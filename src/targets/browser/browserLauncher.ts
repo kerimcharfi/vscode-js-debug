@@ -16,9 +16,9 @@ import { existsInjected } from '../../common/fsUtils';
 import { ILogger } from '../../common/logging';
 import { ISourcePathResolver } from '../../common/sourcePathResolver';
 import {
-  absolutePathToFileUrl,
-  createTargetFilterForConfig,
-  requirePageTarget,
+    absolutePathToFileUrl,
+    createTargetFilterForConfig,
+    requirePageTarget,
 } from '../../common/urlUtils';
 import { AnyChromiumLaunchConfiguration, AnyLaunchConfiguration } from '../../configuration';
 import Dap from '../../dap/api';
@@ -26,7 +26,7 @@ import { browserAttachFailed, browserLaunchFailed, targetPageNotFound } from '..
 import { ProtocolError } from '../../dap/protocolError';
 import { FS, FsPromises, IInitializeParams, StoragePath } from '../../ioc-extras';
 import { ITelemetryReporter } from '../../telemetry/telemetryReporter';
-import { ILaunchContext, ILauncher, ILaunchResult, IStopMetadata, ITarget } from '../targets';
+import { ILaunchContext, ILaunchResult, ILauncher, IStopMetadata, ITarget } from '../targets';
 import { BrowserTargetManager } from './browserTargetManager';
 import { BrowserTarget, BrowserTargetType } from './browserTargets';
 import * as launcher from './launcher';

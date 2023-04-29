@@ -26,3 +26,20 @@ For debugging the companion app used to launch browsers from remotes, the proces
 - Run `npm run watch` for the companion.
 - Run the `Extension and Companion` launch configuration.
 - Set `"browserLaunchLocation": "ui"` in your launch.json to route requests through the companion extension.
+
+## Getting Started
+
+Main components for this project are: Scripts, Sources, SourceMaps, the SourceContainter, Locations and Breakpoints
+A Script represents a unit parsed and executed by chrome/node. It can be a plain js file, a js file containing a sourcemap which was compiled by a bundler or even a wasm module.
+A Source represents a source code files which was compiled by build tools into Script.
+A SourceMap maps Locations between scripts and sources.
+A Source can be pointed at from multiple SourceMaps. E.g. a module imported in many other modules. This is especially the case with inlined functions in wasm.
+A Script however only has one SourceMap pointing to many Sources.
+
+cdp means chrome developer tools
+dap represents a debugger adapter protocol representing a api to vscodes debug UI
+
+important functions are
+
+Thread._onScriptParsed which is fired when chrome runtime parsed a new js or wasm file
+Thread._onPaused is fired e.g. when a breakpoint is hit

@@ -106,7 +106,7 @@ export class DebugAdapter implements IDisposable {
     this.dap.on('prettyPrintSource', params => this._prettyPrintSource(params));
     this.dap.on('revealPage', () => this._withThread(thread => thread.revealPage()));
     this.dap.on('getPerformance', () =>
-      this._withThread(thread => performanceProvider.retrieve(thread.cdp())),
+      this._withThread(thread => performanceProvider.retrieve(thread.cdp)),
     );
     this.dap.on('breakpointLocations', params => this._breakpointLocations(params));
     this.dap.on('createDiagnostics', params => this._dumpDiagnostics(params));
@@ -122,14 +122,14 @@ export class DebugAdapter implements IDisposable {
   private _setDebuggerProperty(
     params: Dap.SetDebuggerPropertyParams,
   ): Promise<Dap.SetDebuggerPropertyResult> {
-    this._thread?.cdp().DotnetDebugger.setDebuggerProperty(params);
+    this._thread?.cdp.DotnetDebugger.setDebuggerProperty(params);
     return Promise.resolve({});
   }
 
   private _setSymbolOptions(
     params: Dap.SetSymbolOptionsParams,
   ): Promise<Dap.SetSymbolOptionsResult> {
-    this._thread?.cdp().DotnetDebugger.setSymbolOptions(params);
+    this._thread?.cdp.DotnetDebugger.setSymbolOptions(params);
     return Promise.resolve({});
   }
 

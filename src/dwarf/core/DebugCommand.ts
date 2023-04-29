@@ -47,6 +47,7 @@ export interface WebAssemblyDebugState {
 }
 
 export interface RuntimeStackFrame {
+  locals: any[];
   frame: Protocol.Debugger.CallFrame;
   stack: IRuntimeStackFrame;
   state?: WebAssemblyDebugState;

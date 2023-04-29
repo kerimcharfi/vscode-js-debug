@@ -8,14 +8,15 @@ import { absolutePathToFileUrl, urlToRegex } from '../../common/urlUtils';
 import Dap from '../../dap/api';
 import { BreakpointManager } from '../breakpoints';
 import {
-  ISourceScript,
-  IUiLocation,
-  Source,
-  SourceFromMap,
-  base1To0,
-  uiToRawOffset,
+    IScript,
+    IUiLocation,
+    Script,
+    Source,
+    SourceFromMap,
+    base1To0,
+    uiToRawOffset,
 } from '../sources';
-import { Script, Thread } from '../threads';
+import { Thread } from '../threads';
 
 export type LineColumn = { lineNumber: number; columnNumber: number }; // 1-based
 
@@ -235,7 +236,7 @@ export abstract class Breakpoint {
 
     const uiLocation = (
       await Promise.all(
-        resolvedLocations.map(l => thread.rawLocationToUiLocation(thread.rawLocation(l))),
+        resolvedLocations.map(l => thread.scriptLocationToUiLocation(thread.scriptLocation(l))),
       )
     ).find(l => !!l);
 
@@ -511,7 +512,7 @@ export abstract class Breakpoint {
    * requests to avoid triggering any logpoint breakpoints multiple times,
    * as would happen if we set a breakpoint both by script and URL.
    */
-  protected hasSetOnLocation(script: ISourceScript, lineColumn: LineColumn) {
+  protected hasSetOnLocation(script: IScript, lineColumn: LineColumn) {
     return this.cdpBreakpoints.find(
       bp =>
         (script.scriptId &&
@@ -574,7 +575,7 @@ export abstract class Breakpoint {
 
   private async _setByScriptId(
     thread: Thread,
-    script: ISourceScript,
+    script: IScript,
     lineColumn: LineColumn,
   ): Promise<void> {
     lineColumn = base1To0(lineColumn);
@@ -620,14 +621,14 @@ export abstract class Breakpoint {
 
     state.done = (async () => {
       const result = isSetByLocation(args)
-        ? await thread.cdp().Debugger.setBreakpoint(args)
-        : await thread.cdp().Debugger.setBreakpointByUrl(args);
+        ? await thread.cdp.Debugger.setBreakpoint(args)
+        : await thread.cdp.Debugger.setBreakpointByUrl(args);
       if (!result) {
         return;
       }
 
       if (state.deadletter) {
-        await thread.cdp().Debugger.removeBreakpoint({ breakpointId: result.breakpointId });
+        await thread.cdp.Debugger.removeBreakpoint({ breakpointId: result.breakpointId });
         return;
       }
 
@@ -663,7 +664,7 @@ export abstract class Breakpoint {
       await breakpoint.done;
     } else {
       await this._manager._thread
-        ?.cdp()
+        ?.cdp
         .Debugger.removeBreakpoint({ breakpointId: breakpoint.cdpId });
       this._manager._resolvedBreakpoints.delete(breakpoint.cdpId);
     }

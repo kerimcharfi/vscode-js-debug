@@ -8,8 +8,9 @@ import { StackFrame } from '../../adapter/stackTrace';
 import { AnyLaunchConfiguration } from '../../configuration';
 import { Base01Position, IPosition } from '../positions';
 import { PositionToOffset } from '../stringUtils';
-import { SourceMap } from './sourceMap';
-import { ISourceMapFactory } from './sourceMapFactory';
+// import { SourceMap } from './sourceMap';
+// import { ISourceMapFactory } from './sourceMapFactory';
+import { ISourceMapFactory, SourceMap } from "../../adapter/sources";
 
 interface IRename {
   original: string;

@@ -6,7 +6,7 @@ import { inject, injectable } from 'inversify';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mapValues } from '../common/objUtils';
-import { ISourceMapMetadata } from '../common/sourceMaps/sourceMap';
+// import { ISourceMapMetadata } from '../common/sourceMaps/sourceMap';
 import { AnyLaunchConfiguration } from '../configuration';
 import Dap from '../dap/api';
 import { toolPath, toolStylePath } from '../diagnosticTool';
@@ -18,7 +18,7 @@ import {
   IBreakpointCdpReferenceApplied,
   IBreakpointCdpReferencePending,
 } from './breakpoints/breakpointBase';
-import { IUiLocation, SourceContainer, SourceFromMap } from './sources';
+import { IUiLocation, SourceContainer, SourceFromMap, ISourceMapMetadata } from './sources';
 
 export interface IDiagnosticSource {
   uniqueId: number;

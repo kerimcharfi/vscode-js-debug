@@ -20,12 +20,12 @@ import { AnyLaunchConfiguration } from '../../configuration';
 import Dap from '../../dap/api';
 import { ITarget } from '../../targets/targets';
 import {
-  ISourceScript,
-  ISourceWithMap,
-  Source,
-  SourceContainer,
-  SourceFromMap,
-  isSourceWithMap,
+    IScript,
+    ISourceWithMap,
+    Source,
+    SourceContainer,
+    SourceFromMap,
+    isSourceWithMap,
 } from '../sources';
 import { getSourceSuffix } from '../templates';
 import { simpleGlobsToRe } from './simpleGlobToRe';
@@ -206,7 +206,7 @@ export class ScriptSkipper {
 
   private async _updateSourceWithSkippedSourceMappedSources(
     source: ISourceWithMap,
-    scripts: readonly ISourceScript[],
+    scripts: readonly IScript[],
   ): Promise<void> {
     // Order "should" be correct
     const parentIsSkipped = this.isScriptSkipped(source.url);
@@ -276,7 +276,7 @@ export class ScriptSkipper {
     if (isSourceWithMap(source)) {
       if (skipped) {
         // if compiled and skipped, also skip authored sources
-        for (const authoredSource of source.sourceMap.sourceByUrl.values()) {
+        for (const authoredSource of source.sourceMaps[0].sourceByUrl.values()) {
           this._isUrlFromSourceMapSkipped.set(authoredSource.url, true);
         }
       }
