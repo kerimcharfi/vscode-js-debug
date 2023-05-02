@@ -5,8 +5,8 @@ import type Protocol from 'devtools-protocol/types/protocol';
 import type ProtocolApi from 'devtools-protocol/types/protocol-proxy-api';
 import { existsSync, readFileSync } from 'fs';
 import {
-  DebuggerWorkflowCommand,
   DebuggerDumpCommand,
+  DebuggerWorkflowCommand,
   RuntimeStackFrame,
   Variable,
 } from '../DebugCommand';
@@ -34,7 +34,7 @@ class MemoryEvaluator {
     const cache = this.evaluationCache.get(address);
 
     if (cache && size <= cache.length) {
-      return Promise.resolve(cache.slice(0, size));
+      return Promise.resolve(Object.values(cache).slice(0, size));
     }
 
     const pending = this.pendingEvaluations.get(address);
@@ -221,6 +221,8 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
       frame.state,
     );
 
+    // return wasmVariable
+
     if (!wasmVariable) {
       return;
     }
@@ -228,6 +230,7 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
     let evaluationResult = wasmVariable.evaluate() || '<failure>';
     let limit = 0;
 
+    //while ((expr == "myint" || expr == "size" || expr == "anotherint" || wasmVariable.is_required_memory_slice()) && limit < 2) {
     while (wasmVariable.is_required_memory_slice() && limit < 20) {
       const slice = wasmVariable.required_memory_slice();
       const result = await this.memoryEvaluator.evaluate(
@@ -236,7 +239,12 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
         slice.byte_size,
       );
       slice.set_memory_slice(new Uint8Array(result));
+
       evaluationResult = wasmVariable.resume_with_memory_slice(slice) || evaluationResult;
+
+      if(evaluationResult == "Int(4)"){
+        return
+      }
 
       limit++;
     }

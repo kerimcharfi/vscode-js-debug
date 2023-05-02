@@ -174,7 +174,7 @@ gulp.task('compile:static', () =>
       },
     ),
     gulp
-      .src(['node_modules/source-map/lib/*.wasm', 'node_modules/@c4312/chromehash/pkg/*.wasm'])
+      .src(['src/dwarf/pkg/*.wasm', 'node_modules/source-map/lib/*.wasm','node_modules/@c4312/chromehash/pkg/*.wasm'])
       .pipe(rename({ dirname: 'src' })),
   ).pipe(gulp.dest(buildDir)),
 );

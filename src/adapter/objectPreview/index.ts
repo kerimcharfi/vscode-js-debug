@@ -80,7 +80,7 @@ function previewRemoteObjectInternal(
     return object.description;
   }
 
-  return 'preview' in object && object.preview
+  return object.preview
     ? renderPreview(object.preview, context.budget, valueFormat)
     : renderValue(object, context.budget, context.quoted, valueFormat);
 }
