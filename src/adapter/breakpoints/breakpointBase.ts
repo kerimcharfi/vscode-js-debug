@@ -8,13 +8,13 @@ import { absolutePathToFileUrl, urlToRegex } from '../../common/urlUtils';
 import Dap from '../../dap/api';
 import { BreakpointManager } from '../breakpoints';
 import {
-    IScript,
-    IUiLocation,
-    Script,
-    Source,
-    SourceFromMap,
-    base1To0,
-    uiToRawOffset,
+  IScript,
+  IUiLocation,
+  Script,
+  Source,
+  SourceFromMap,
+  base1To0,
+  uiToRawOffset,
 } from '../sources';
 import { Thread } from '../threads';
 
@@ -296,7 +296,7 @@ export abstract class Breakpoint {
     }
 
     // Find all locations for this breakpoint in the new script.
-    const uiLocations = this._manager._sourceContainer.getCompiledLocationsFromSource(
+    const uiLocations = this._manager._sourceContainer.getCompiledLocationsInScript(
       {
         lineNumber: this.originalPosition.lineNumber,
         columnNumber: this.originalPosition.columnNumber,
@@ -460,9 +460,14 @@ export abstract class Breakpoint {
   }
 
   private async _setByUiLocation(thread: Thread, uiLocation: IUiLocation): Promise<void> {
-    await Promise.all(
-      uiLocation.source.scripts.map(script => this._setByScriptId(thread, script, uiLocation)),
-    );
+    if(uiLocation.script){
+      await this._setByScriptId(thread, uiLocation.script, uiLocation)
+    }
+    if(uiLocation.source?.scripts){
+      await Promise.all(
+        uiLocation.source.scripts.map(script => this._setByScriptId(thread, script, uiLocation)),
+      );
+    }
   }
 
   protected async _setByPath(thread: Thread, lineColumn: LineColumn): Promise<void> {

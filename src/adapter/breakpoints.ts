@@ -353,12 +353,17 @@ export class BreakpointManager {
       // Only take the last script that matches this source. The breakpoints
       // are all coming from the same source code, so possible breakpoints
       // at one location where this source is present should match every other.
-      const lsrc = start.source;
-      if (!lsrc.scripts.length) {
-        continue;
+      let scriptId = start.script?.scriptId
+      const lsrc = start.source ?? start.script;
+
+      if(!scriptId){
+        if (!lsrc.scripts.length) {
+          continue;
+        }
+
+        scriptId = lsrc.scripts[lsrc.scripts.length - 1].scriptId;
       }
 
-      const { scriptId } = lsrc.scripts[lsrc.scripts.length - 1];
       todo.push(
         thread
           .cdp

@@ -6,7 +6,7 @@ import { inject, injectable } from 'inversify';
 import { ILogger, LogTag } from '../common/logging';
 import { isInstanceOf } from '../common/objUtils';
 import { AnyLaunchConfiguration } from '../configuration';
-import { isSourceWithMap, UnmappedReason } from './sources';
+import { UnmappedReason, isSourceWithMap } from './sources';
 import { StackFrame } from './stackTrace';
 import { ExpectedPauseReason, IPausedDetails, PausedReason, StepDirection } from './threads';
 
@@ -24,7 +24,7 @@ export async function shouldStepOverStackFrame(
     return StackFrameStepOverReason.NotStepped;
   }
 
-  if (uiLocation.source.blackboxed()) {
+  if (uiLocation.source?.blackboxed()) {
     return StackFrameStepOverReason.Blackboxed;
   }
 

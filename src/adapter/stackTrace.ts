@@ -11,7 +11,7 @@ import Dap from '../dap/api';
 import { asyncScopesNotAvailable } from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
 import { StackFrameStepOverReason, shouldStepOverStackFrame } from './smartStepping';
-import { ScriptLocation, IPreferredUiLocation } from './sources';
+import { IPreferredUiLocation, ScriptLocation } from './sources';
 import { Thread } from './threads';
 import { IExtraProperty, IScopeRef, IVariableContainer } from './variableStore';
 
@@ -372,7 +372,7 @@ export class StackFrame implements IFrameElement {
           const startUiLocation = await this._thread.scriptLocationToUiLocation(startScriptLocation);
           dap.line = (startUiLocation || startScriptLocation).lineNumber;
           dap.column = (startUiLocation || startScriptLocation).columnNumber;
-          if (startUiLocation) dap.source = await startUiLocation.source.toDap();
+          if (startUiLocation?.source) dap.source = await startUiLocation.source.toDap();
           if (scope.endLocation) {
             const endScriptLocation = this._thread.scriptLocation(scope.endLocation);
             const endUiLocation = await this._thread.scriptLocationToUiLocation(endScriptLocation);
@@ -390,7 +390,7 @@ export class StackFrame implements IFrameElement {
   /** @inheritdoc */
   async toDap(format?: Dap.StackFrameFormat): Promise<Dap.StackFrame> {
     const uiLocation = await this.uiLocation();
-    const source = uiLocation ? await uiLocation.source.toDap() : undefined;
+    const source = uiLocation?.source ? await uiLocation.source.toDap() : undefined;
     const isSmartStepped = await shouldStepOverStackFrame(this);
     const presentationHint = isSmartStepped ? 'deemphasize' : 'normal';
     if (isSmartStepped && source) {

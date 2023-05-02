@@ -52,12 +52,12 @@ import { sourceMapParseFailed } from '../dap/errors';
 import {
   DummySourceMap,
   IPreferredUiLocation,
+  ISourceMapMetadata,
   IUiLocation,
   Script,
   ScriptLocation,
   Source,
   SourceContainer,
-  SourceFromMap,
   SourceMap,
   base1To0,
   rawToUiOffset
@@ -1651,8 +1651,7 @@ export class Thread implements IVariableStoreLocationProvider {
       sourceMap.compiled.add(script);
       this.sourceContainer._sourceMaps.set(event.sourceMapURL, sourceMap);
 
-
-      for(const source of sources){{sources, sourceMap}
+      for(const source of sources){
         source.addScript(script);
         source.sourceMaps.push(sourceMap)
       }
@@ -1690,7 +1689,7 @@ export class Thread implements IVariableStoreLocationProvider {
 
 
       return {
-        sources: [] as Source[],
+        sources: [], // [file] as Source[],
         sourceMap: new DummySourceMap()
       }
     }
@@ -1798,21 +1797,26 @@ export class Thread implements IVariableStoreLocationProvider {
       return noResult
     }
 
-    const existingSourceMap = this.sourceContainer.getSourceMapByUrl(sourceMapUrl);
-    if (existingSourceMap) {
-      // if (existingSourceMap.map) {
-      //   // If source map has been already loaded, we add sources here.
-      //   // Otheriwse, we'll add sources for all compiled after loading the map.
-      //   await this._addSourceMapSources(source, existingSourceMap.map);
-      // }
-      // return;
-      return {
-        sourceMap: existingSourceMap,
-        sources: this.sourceContainer.getSourcesByUrl(sourceMapUrl) ?? []
-      }
-    }
-
     const deferred = getDeferred<void>();
+
+    const existingSourceMap = this.sourceContainer.getSourceMapByUrl(sourceMapUrl);
+    // if (existingSourceMap) {
+    //   if(!existingSourceMap.deferred.hasSettled()){
+    //     await existingSourceMap.loaded
+
+    //   }
+    //   existingSourceMap.deferred = deferred
+    //   existingSourceMap.loaded = deferred.promise
+    //     // If source map has been already loaded, we add sources here.
+    //     // Otheriwse, we'll add sources for all compiled after loading the map.
+    //   const sources = await this.sourceContainer._addSourceMapSources(script, existingSourceMap);
+    //   deferred.resolve()
+    //   return {
+    //     sourceMap: existingSourceMap,
+    //     sources
+    //   }
+    // }
+
     // const sourceMapData: SourceMapData = { compiled: new Set([script]), loaded: deferred.promise };
 
     // this.sourceMap = {
@@ -1821,9 +1825,10 @@ export class Thread implements IVariableStoreLocationProvider {
     //   metadata: ,
     // };
 
-    const sourceMapMetadata = {
+    const sourceMapMetadata: ISourceMapMetadata = {
       sourceMapUrl,
       compiledPath: script.url,
+      loaded: deferred
     }
     let sourceMap
 
@@ -1864,6 +1869,7 @@ export class Thread implements IVariableStoreLocationProvider {
           output: sourceMapParseFailed(script.url, urlError.message).error.format + '\n',
           category: 'stderr',
         }));
+        deferred.resolve()
         return noResult
 
         // return deferred.resolve();
@@ -1880,11 +1886,7 @@ export class Thread implements IVariableStoreLocationProvider {
       metadata: sourceMap.metadata,
     });
 
-    const sourcePromises: Promise<SourceFromMap>[] = [];
-    for (const compiled of sourceMap.compiled) {
-      sourcePromises.push(this.sourceContainer._addSourceMapSources(compiled, sourceMap));
-    }
-    const sources = (await Promise.all(sourcePromises)).flat();
+    const sources = await this.sourceContainer._addSourceMapSources(script, sourceMap);
     this.sourceContainer._sourcesBySourceMapUrl.set(sourceMapUrl, sources)
 
     // re-initialize after loading source mapped sources
@@ -1900,22 +1902,21 @@ export class Thread implements IVariableStoreLocationProvider {
 
     // await sourceMap.loaded;
 
+    // ctx.sourceMapLoads.set(event.scriptId, result);
+
+
     return {
       sourceMap,
       sources: sources.flat()
     }
-    return [...sourceMapData.sourceByUrl.values()];
 
-    // const result = script.source
+    // return script.source
     //   .then(source => this.sourceContainer.waitForSourceMapSources(source))
     //   .then(sources =>
     //     sources.length && this._scriptWithSourceMapHandler
     //       ? this._scriptWithSourceMapHandler(script, sources)
     //       : [],
     //   );
-
-    ctx.sourceMapLoads.set(event.scriptId, result);
-    return result;
   }
 
   async _revealObject(object: Cdp.Runtime.RemoteObject) {
