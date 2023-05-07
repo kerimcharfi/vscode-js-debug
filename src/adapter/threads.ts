@@ -50,6 +50,7 @@ import {
 
 import { sourceMapParseFailed } from '../dap/errors';
 import {
+  DwarfSourceMap,
   IPreferredUiLocation,
   ISourceMapMetadata,
   IUiLocation,
@@ -1663,6 +1664,9 @@ export class Thread implements IVariableStoreLocationProvider {
     script.source = source
     source.scriptByExecutionContext.set(this._executionContexts.get(event.executionContextId), script)
 
+
+
+    let sourceMap: SourceMap | undefined
     if (event.scriptLanguage == 'WebAssembly') {
       console.error(`Start Loading ${event.url}...`);
 
@@ -1675,7 +1679,7 @@ export class Thread implements IVariableStoreLocationProvider {
       this.dwarfDebugSession.loadedWebAssembly(file);
 
       console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
-
+      sourceMap = new DwarfSourceMap()
     }
 
     if (event.sourceMapURL) {
@@ -1740,11 +1744,13 @@ export class Thread implements IVariableStoreLocationProvider {
         // return sourcePromise;
       }
 
-      const sourceMap = await this._getOrLoadSourceMaps(script, event.sourceMapURL)
-      source.outgoingSourceMap = sourceMap
-      if(sourceMap){
-        sourceMap.source = source
-      }
+      sourceMap = await this._getOrLoadSourceMaps(script, event.sourceMapURL)
+
+    }
+
+    source.outgoingSourceMap = sourceMap
+    if(sourceMap){
+      sourceMap.source = source
     }
 
     this.sourceContainer.addSource(source)

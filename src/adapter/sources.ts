@@ -716,6 +716,10 @@ export class SourceMap implements SourceMapConsumer {
   }
 }
 
+export class DwarfSourceMap extends SourceMap{
+  
+}
+
 
 // export const isSourceWithMap = (source: unknown): source is ISourceWithMap =>
 //   !!source && source instanceof Source && !!source.outgoingSourceMaps.length && !(source.outgoingSourceMaps[0] instanceof DummySourceMap);
