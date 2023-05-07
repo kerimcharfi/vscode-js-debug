@@ -319,7 +319,7 @@ export class Thread implements IVariableStoreLocationProvider {
     return this._cdp;
   }
 
-  get dap(): Dap.Api {
+  get dap(){
     return this._dap;
   }
 
@@ -1260,22 +1260,21 @@ export class Thread implements IVariableStoreLocationProvider {
 
   scriptLocation(
     location: Cdp.Runtime.CallFrame | Cdp.Debugger.CallFrame | Cdp.Debugger.Location,
-  ): ScriptLocation {
+  ): ScriptLocation | undefined {
     // Note: cdp locations are 0-based, while ui locations are 1-based. Also,
     // some we can *apparently* get negative locations; Vue's "hello world"
     // project was observed to emit source locations at (-1, -1) in its callframe.
-    if ('location' in location) {
-      const loc = location as Cdp.Debugger.CallFrame;
-      return {
-        lineNumber: Math.max(0, loc.location.lineNumber) + 1,
-        columnNumber: Math.max(0, loc.location.columnNumber || 0) + 1,
-        script: this.sourceContainer.getScriptById(loc.location.scriptId),
-      };
+    const loc = (location as Cdp.Debugger.CallFrame).location ?? location;
+    const script = this.sourceContainer.getScriptById(loc.scriptId)
+
+    if(!script){
+      return
     }
+
     return {
-      lineNumber: Math.max(0, location.lineNumber) + 1,
-      columnNumber: Math.max(0, location.columnNumber || 0) + 1,
-      script: this.sourceContainer.getScriptById(location.scriptId),
+      lineNumber: Math.max(0, loc.lineNumber) + 1,
+      columnNumber: Math.max(0, loc.columnNumber || 0) + 1,
+      script
     };
   }
 
@@ -1649,54 +1648,20 @@ export class Thread implements IVariableStoreLocationProvider {
       return;
     }
 
-    const script: Script = new Script();
-
-    script.url =  event.url,
-    script.scriptId = event.scriptId,
-    script.container = this.sourceContainer
-    script.executionContextId = event.executionContextId,
-      // source: createSource(),
-
-    script.sourcePromise = this.getSourceFromScriptEvent(event, script).then(source => {
-      if(source){
-        this.sourceContainer._addSource(source)
-      }
-      script.source = source
-      return source
-    })
-
-
-    // script.sourcesPromise = this.getSourceFromScriptEvent(event, script).then(({sources, sourceMap})=>{
-    //   script.sources = sources
-    //   script.sourceMap = sourceMap
-    //   if(!sourceMap) return {sources, sourceMap}
-
-    //   sourceMap.compiled.add(script);
-    //   this.sourceContainer._sourceMaps.set(event.sourceMapURL, sourceMap);
-
-    //   for(const source of sources){
-    //     source.addScript(script);
-    //     source.outgoingSourceMaps.push(sourceMap)
-    //   }
-
-    //   // for(const map of sourceMaps){
-    //   //   this.sourceContainer.addSourceMap(sourceUrl, sourceMap);
-    //   // }
-
-    //   for(const source of sources){
-    //     this.sourceContainer._addSource(source);
-    //   }
-
-    //   return {sources, sourceMap}
-    // })
+    const script = new Script(event, this.sourceContainer, (script: Script)=>this.createSourceFromScriptEvent(event, script));
 
     executionContext.scripts.push(script);
-
     this.sourceContainer.addScript(script);
   }
 
-  async getSourceFromScriptEvent(event: Cdp.Debugger.ScriptParsedEvent, script: Script): Promise<SourceFromScript | undefined>{
-    let sourceMap
+  async createSourceFromScriptEvent(event: Cdp.Debugger.ScriptParsedEvent, script: Script): Promise<SourceFromScript>{
+    let source = this.sourceContainer.getSourceByOriginalUrl(event.url) as SourceFromScript | undefined;
+    if (!source || !(source instanceof SourceFromScript) || !event.hash || source?.contentHash !== event.hash) {
+      source = await SourceFromScript.createFromScript(event, this, script)
+    }
+
+    script.source = source
+    source.scriptByExecutionContext.set(this._executionContexts.get(event.executionContextId), script)
 
     if (event.scriptLanguage == 'WebAssembly') {
       console.error(`Start Loading ${event.url}...`);
@@ -1718,21 +1683,71 @@ export class Thread implements IVariableStoreLocationProvider {
       // map and set breakpoints as soon as possible. We pause on the first line
       // (the "module entry breakpoint") to ensure this resolves.
 
-      sourceMap = await this._getOrLoadSourceMaps(event, script)
+
+      // Note: we should in theory refetch source maps with relative urls, if the base url has changed,
+      // but in practice that usually means new scripts with new source maps anyway.
+      const resolvedSourceMapUrl = urlUtils.isDataUri(event.sourceMapURL)
+        ? event.sourceMapURL
+        : (event.url && urlUtils.completeUrl(event.url, event.sourceMapURL)) || event.url;
+      if (!resolvedSourceMapUrl) {
+        this.dap.with(dap =>
+          errors.reportToConsole(dap, `Could not load source map from ${event.sourceMapURL}`),
+        );
+      }
+
+      {
+          //
+        // const absolutePath = await this._sourceContainer.sourcePathResolver.urlToAbsolutePath({ url: event.url });
+        // if(absolutePath){
+        //   const mappedSource = this._sourceContainer.getSourceByAbsolutePath(absolutePath)
+        //   if(mappedSource) {
+        //     if(resolvedSourceMapUrl){
+        //       mappedSource.setSourceMapUrl(resolvedSourceMapUrl)
+        //     }
+        //     mappedSource.addScript({
+        //       scriptId: event.scriptId,
+        //       url: event.url,
+        //       executionContextId: event.executionContextId,
+        //     });
+        //     // return mappedSource
+        //   }
+        // }
+        // resolvedSourceMapUrl &&
+        // thread.sourceContainer.sourcePathResolver.shouldResolveSourceMap({
+        //   resolvedSourceMapUrl,
+        //   compiledPath: absolutePath || event.url,
+        // })
+        //   ? resolvedSourceMapUrl
+        //   : undefined,
+
+        // const sourcePromise = thread.sourceContainer.addSource(
+        //   event.url,
+        //   contentGetter,
+        //   resolvedSourceMapUrl,
+        //   inlineSourceOffset,
+        //   runtimeScriptOffset,
+        //   // only include the script hash if content validation is enabled, and if
+        //   // the source does not have a redirected URL. In the latter case the
+        //   // original file won't have a `# sourceURL=...` comment, so the hash
+        //   // never matches: https://github.com/microsoft/vscode-js-debug/issues/1476
+        //   !event.hasSourceURL && thread.launchConfig.enableContentValidation ? event.hash : undefined,
+        // ).then(source => {
+        //   source.addScript(script)
+        //   return source
+        // })
+        //
+
+        // return sourcePromise;
+      }
+
+      const sourceMap = await this._getOrLoadSourceMaps(script, event.sourceMapURL)
+      source.outgoingSourceMap = sourceMap
+      if(sourceMap){
+        sourceMap.source = source
+      }
     }
 
-    // assuming plain js without sourcemap -> create Source from scripts contents
-    let source = this.sourceContainer.getSourceByOriginalUrl(event.url) as SourceFromScript | undefined;
-    if (!source || !(source instanceof SourceFromScript) || !event.hash || source?.contentHash !== event.hash) {
-      source = await SourceFromScript.createFromScript(event, this, script)
-    }
-
-    source.outgoingSourceMap = sourceMap
-    if(sourceMap){
-      sourceMap.source = source
-    }
-
-    source.scriptByExecutionContext.set(this._executionContexts.get(event.executionContextId), script)
+    this.sourceContainer.addSource(source)
 
     return source
   }
@@ -1812,10 +1827,6 @@ export class Thread implements IVariableStoreLocationProvider {
     return loads
       .map(base1To0)
       .some(b => b.lineNumber === bLine && (bColumn === undefined || bColumn === b.columnNumber))
-
-    // return !![...(sourceMap?.sourceByUrl.values() ?? [])]
-
-
   }
 
   /**
@@ -1823,7 +1834,7 @@ export class Thread implements IVariableStoreLocationProvider {
    * haven't already done so. Returns a promise that resolves with the
    * handler's results.
    */
-  private async _getOrLoadSourceMaps(event: Cdp.Debugger.ScriptParsedEvent, script: Script): Promise<SourceMap | undefined> {
+  private async _getOrLoadSourceMaps(script: Script, sourceMapURL: string): Promise<SourceMap | undefined> {
     const ctx = this._executionContexts.get(script.executionContextId);
     if (!ctx) {
       return;
@@ -1834,15 +1845,9 @@ export class Thread implements IVariableStoreLocationProvider {
     //   return existing;
     // }
 
-    const sourceMapUrl = event.sourceMapURL;
-
-    if(!sourceMapUrl){
-      return
-    }
-
     const deferred = getDeferred<void>();
 
-    const existingSourceMap = this.sourceContainer.getSourceMapByUrl(sourceMapUrl);
+    const existingSourceMap = this.sourceContainer.getSourceMapByUrl(sourceMapURL);
     // if (existingSourceMap) {
     //   if(!existingSourceMap.deferred.hasSettled()){
     //     await existingSourceMap.loaded
@@ -1860,23 +1865,15 @@ export class Thread implements IVariableStoreLocationProvider {
     //   }
     // }
 
-    // const sourceMapData: SourceMapData = { compiled: new Set([script]), loaded: deferred.promise };
-
-    // this.sourceMap = {
-    //   url: sourceMapUrl,
-    //   sourceByUrl: new Map(),
-    //   metadata: ,
-    // };
-
     const sourceMapMetadata: ISourceMapMetadata = {
-      sourceMapUrl,
+      sourceMapUrl: sourceMapURL,
       compiledPath: script.url,
       loaded: deferred
     }
     let sourceMap
 
     let sourceMapLoadsDeferred = getDeferred<IUiLocation[]>()
-    ctx.sourceMapLoads.set(event.scriptId, sourceMapLoadsDeferred.promise);
+    ctx.sourceMapLoads.set(script.scriptId, sourceMapLoadsDeferred.promise);
 
     try {
       sourceMap = await this.sourceContainer.sourceMapFactory.load(sourceMapMetadata);
@@ -1935,11 +1932,9 @@ export class Thread implements IVariableStoreLocationProvider {
 
 
     const sources = await this.sourceContainer._addSourceMapSources(script, sourceMap);
-    this.sourceContainer._sourcesBySourceMapUrl.set(sourceMapUrl, sources)
+    this.sourceContainer._sourcesBySourceMapUrl.set(sourceMapURL, sources)
 
     deferred.resolve();
-
-
 
     // const sourceMap = this._sourceMaps.get(sourceUrl);
     if (
@@ -1960,8 +1955,6 @@ export class Thread implements IVariableStoreLocationProvider {
     // this.sourceContainer.scriptSkipper.initializeSkippingValueForSource(script.source);
 
     return sourceMap
-
-    // return
   }
 
   async _revealObject(object: Cdp.Runtime.RemoteObject) {

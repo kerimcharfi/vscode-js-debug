@@ -33,13 +33,11 @@ import { fixDriveLetterAndSlashes } from '../common/pathUtils';
 import { ISourcePathResolver, InlineScriptOffset } from '../common/sourcePathResolver';
 import * as sourceUtils from '../common/sourceUtils';
 import { prettyPrintAsSourceMap } from '../common/sourceUtils';
-import * as urlUtils from '../common/urlUtils';
 import * as utils from '../common/urlUtils';
 import { completeUrlEscapingRoot, fileUrlToAbsolutePath, isDataUri } from '../common/urlUtils';
 import { AnyLaunchConfiguration } from '../configuration';
 import Dap from '../dap/api';
 import { IDapApi } from '../dap/connection';
-import * as errors from '../dap/errors';
 import { sourceMapParseFailed } from '../dap/errors';
 import { IInitializeParams } from '../ioc-extras';
 import { IStatistics } from '../telemetry/classification';
@@ -116,43 +114,23 @@ const defaultTimeouts: SourceMapTimeouts = {
   sourceMapCumulativePause: 10000,
 };
 
+
 export class Script {
+  source: SourceFromScript | undefined;
+
   url: string;
   scriptId: string;
   executionContextId: number;
-  source: SourceFromScript;
   sourcePromise: Promise<SourceFromScript>;
   container: SourceContainer
 
-  private readonly _contentGetter: ContentGetter;
-
-  constructor(
-    // contentGetter: ContentGetter,
-  ){
-    // this._contentGetter = once(contentGetter);
+  constructor(event: Cdp.Debugger.ScriptParsedEvent, container: SourceContainer, sourcePromiseClosure: (s: Script)=>Promise<SourceFromScript>){
+    this.url = event.url
+    this.scriptId = event.scriptId
+    this.executionContextId = event.executionContextId
+    this.container = container
+    this.sourcePromise = sourcePromiseClosure(this)
   }
-
-  async content(): Promise<string | undefined> {
-    let content = await this._contentGetter();
-
-    // // pad for the inline source offset, see
-    // // https://github.com/microsoft/vscode-js-debug/issues/736
-    // if (this.inlineScriptOffset?.lineOffset) {
-    //   content = '\n'.repeat(this.inlineScriptOffset.lineOffset) + content;
-    // }
-
-    return content;
-  }
-  // source: Promise<Source>; // TODO: rename to content or remove
-  // resolvedSource?: Source;
-
-  /**
-  * Gets whether this script is blackboxed (part of the skipfiles).
-  */
-  public blackboxed(): boolean {
-    return this.container.isSourceSkipped(this.url);
-  }
-
 };
 
 export type ScriptWithSourceMapHandler = (
@@ -250,22 +228,6 @@ export abstract class Source {
       container._fileContentOverridesForTest.get(this.absolutePath),
     );
   }
-
-  // public setSourceMapUrl(sourceMapUrl?: string) {
-  //   if (!sourceMapUrl) {
-  //     this.sourceMap = undefined;
-  //     return;
-  //   }
-
-  //   this.sourceMap = {
-  //     url: sourceMapUrl,
-  //     sourceByUrl: new Map(),
-  //     metadata: {
-  //       sourceMapUrl,
-  //       compiledPath: this.absolutePath || this.url,
-  //     },
-  //   };
-  // }
 
   /**
    * Gets a suggested mimetype for the source.
@@ -537,35 +499,6 @@ export class SourceFromScript extends Source {
   }
 
   static async createFromScript(event: Cdp.Debugger.ScriptParsedEvent, thread: Thread, script: Script): Promise<SourceFromScript> {
-    let resolvedSourceMapUrl: string | undefined;
-    if (event.sourceMapURL) {
-      // Note: we should in theory refetch source maps with relative urls, if the base url has changed,
-      // but in practice that usually means new scripts with new source maps anyway.
-      resolvedSourceMapUrl = urlUtils.isDataUri(event.sourceMapURL)
-        ? event.sourceMapURL
-        : (event.url && urlUtils.completeUrl(event.url, event.sourceMapURL)) || event.url;
-      if (!resolvedSourceMapUrl) {
-        thread.dap.with(dap =>
-          errors.reportToConsole(dap, `Could not load source map from ${event.sourceMapURL}`),
-        );
-      }
-    }
-
-    // const absolutePath = await this._sourceContainer.sourcePathResolver.urlToAbsolutePath({ url: event.url });
-    // if(absolutePath){
-    //   const mappedSource = this._sourceContainer.getSourceByAbsolutePath(absolutePath)
-    //   if(mappedSource) {
-    //     if(resolvedSourceMapUrl){
-    //       mappedSource.setSourceMapUrl(resolvedSourceMapUrl)
-    //     }
-    //     mappedSource.addScript({
-    //       scriptId: event.scriptId,
-    //       url: event.url,
-    //       executionContextId: event.executionContextId,
-    //     });
-    //     // return mappedSource
-    //   }
-    // }
 
     const contentGetter = async () => {
       const response = await thread.cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
@@ -598,36 +531,6 @@ export class SourceFromScript extends Source {
       runtimeScriptOffset,
       !event.hasSourceURL && thread.launchConfig.enableContentValidation ? event.hash : undefined,
     );
-
-    thread.sourceContainer._addSource(source);
-    script.source = source
-
-
-    // resolvedSourceMapUrl &&
-    // thread.sourceContainer.sourcePathResolver.shouldResolveSourceMap({
-    //   resolvedSourceMapUrl,
-    //   compiledPath: absolutePath || event.url,
-    // })
-    //   ? resolvedSourceMapUrl
-    //   : undefined,
-
-    // const sourcePromise = thread.sourceContainer.addSource(
-    //   event.url,
-    //   contentGetter,
-    //   resolvedSourceMapUrl,
-    //   inlineSourceOffset,
-    //   runtimeScriptOffset,
-    //   // only include the script hash if content validation is enabled, and if
-    //   // the source does not have a redirected URL. In the latter case the
-    //   // original file won't have a `# sourceURL=...` comment, so the hash
-    //   // never matches: https://github.com/microsoft/vscode-js-debug/issues/1476
-    //   !event.hasSourceURL && thread.launchConfig.enableContentValidation ? event.hash : undefined,
-    // ).then(source => {
-    //   source.addScript(script)
-    //   return source
-    // })
-
-    // return sourcePromise;
 
     return source
   };
@@ -734,12 +637,12 @@ export class SourceMap implements SourceMapConsumer {
     );
   }
 
-  /**
-   * @inheritdoc
-   */
-  computeColumnSpans(): void {
-    this.original.computeColumnSpans();
-  }
+  // /**
+  //  * @inheritdoc
+  //  */
+  // computeColumnSpans(): void {
+  //   this.original.computeColumnSpans();
+  // }
 
   /**
    * @inheritdoc
@@ -771,19 +674,18 @@ export class SourceMap implements SourceMapConsumer {
    * @inheritdoc
    */
   allGeneratedPositionsFor(originalPosition: MappedPosition): NullablePosition[] {
-
     return this.original.allGeneratedPositionsFor({
       ...originalPosition,
       source: this.sourceActualToOriginal.get(originalPosition.source) ?? originalPosition.source,
     });
   }
 
-  /**
-   * @inheritdoc
-   */
-  hasContentsOfAllSources(): boolean {
-    return this.original.hasContentsOfAllSources();
-  }
+  // /**
+  //  * @inheritdoc
+  //  */
+  // hasContentsOfAllSources(): boolean {
+  //   return this.original.hasContentsOfAllSources();
+  // }
 
   /**
    * @inheritdoc
@@ -1332,22 +1234,7 @@ export class SourceContainer {
     );
   }
 
-  // /**
-  //  * Adds a new source to the collection.
-  //  */
-  // public async addSource(
-  //   url: string,
-  //   contentGetter: ContentGetter,
-  //   sourceMapUrl?: string,
-  //   inlineSourceRange?: InlineScriptOffset,
-  //   runtimeScriptOffset?: InlineScriptOffset,
-  //   contentHash?: string,
-  // ): Promise<Source> {
-
-  //   return source;
-  // }
-
-  public _addSource(source: Source) {
+  public addSource(source: Source) {
     // todo: we should allow the same source at multiple uri's if their scripts
     // have different executionContextId. We only really need the overwrite
     // behavior in Node for tools that transpile sources inline.
@@ -1528,7 +1415,7 @@ export class SourceContainer {
           ? () => Promise.resolve(smContent)
           : fileUrl
           ? () => this.resourceProvider.fetch(fileUrl).then(r => r.body)
-          : () => compiled.content(),
+          : () => compiled.source.content(),
         // Support recursive source maps if the source includes the source content.
         // This obviates the need for the `source-map-loader` in webpack for most cases.
         undefined,
@@ -1540,7 +1427,7 @@ export class SourceContainer {
       source.incommingSourceMaps.add(map)
       // compiled.sourceMap.sourceByUrl.set(url, source);
       map.sourceByUrl.set(url, source);
-      todo.push(this._addSource(source));
+      todo.push(this.addSource(source));
     }
 
     await Promise.all(todo);
@@ -1565,23 +1452,6 @@ export class SourceContainer {
       })
     }
   }
-
-  // Waits for source map to be loaded (if any), and sources to be created from it.
-  // public async waitForSourceMapSources(source: Source): Promise<Source[]> {
-  //   if (!isSourceWithMap(source)) {
-  //     return [];
-  //   }
-
-  //   const sourceMap = this._sourceMaps.get(source.outgoingSourceMap.url);
-  //   if (
-  //     !this.logger.assert(sourceMap, 'Unrecognized source map url in waitForSourceMapSources()')
-  //   ) {
-  //     return [];
-  //   }
-
-  //   await sourceMap.loaded;
-  //   return [...source.outgoingSourceMap.sourceByUrl.values()];
-  // }
 
   /**
    * Opens the UI location within the connected editor.
