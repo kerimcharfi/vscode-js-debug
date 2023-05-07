@@ -15,24 +15,43 @@ import { checkContentHash } from '../common/hash/checkContentHash';
 import { ILogger, LogTag } from '../common/logging';
 import { once } from '../common/objUtils';
 import { forceForwardSlashes, isSubdirectoryOf, properResolve } from '../common/pathUtils';
-import { delay, getDeferred } from '../common/promiseUtil';
-import { ISourceMapMetadata, SourceMap } from '../common/sourceMaps/sourceMap';
-import { CachingSourceMapFactory, ISourceMapFactory } from '../common/sourceMaps/sourceMapFactory';
+// import { ISourceMapMetadata, SourceMap } from '../common/sourceMaps/sourceMap';
+// import { CachingSourceMapFactory, ISourceMapFactory } from '../common/sourceMaps/sourceMapFactory';
+import {
+  BasicSourceMapConsumer,
+  IndexedSourceMapConsumer,
+  MappedPosition,
+  MappingItem,
+  NullablePosition,
+  Position,
+  RawIndexMap,
+  RawSection,
+  RawSourceMap,
+  StartOfSourceMap,
+} from 'source-map';
+import { fixDriveLetterAndSlashes } from '../common/pathUtils';
 import { ISourcePathResolver, InlineScriptOffset } from '../common/sourcePathResolver';
 import * as sourceUtils from '../common/sourceUtils';
 import { prettyPrintAsSourceMap } from '../common/sourceUtils';
+import * as urlUtils from '../common/urlUtils';
 import * as utils from '../common/urlUtils';
+import { completeUrlEscapingRoot, fileUrlToAbsolutePath, isDataUri } from '../common/urlUtils';
 import { AnyLaunchConfiguration } from '../configuration';
 import Dap from '../dap/api';
 import { IDapApi } from '../dap/connection';
+import * as errors from '../dap/errors';
 import { sourceMapParseFailed } from '../dap/errors';
 import { IInitializeParams } from '../ioc-extras';
 import { IStatistics } from '../telemetry/classification';
-import { extractErrorDetails } from '../telemetry/dapTelemetryReporter';
 import { IResourceProvider } from './resourceProvider';
 import { ScriptSkipper } from './scriptSkipper/implementation';
 import { IScriptSkipper } from './scriptSkipper/scriptSkipper';
-import { Script } from './threads';
+import { ExecutionContext, Thread } from './threads';
+
+import { IDisposable } from '../common/disposable';
+import { truthy } from '../common/objUtils';
+import { IDeferred, delay } from '../common/promiseUtil';
+import { IRootDapApi } from '../dap/connection';
 
 // This is a ui location which corresponds to a position in the document user can see (Source, Dap.Source).
 export interface IUiLocation {
@@ -61,7 +80,7 @@ const getFallbackPosition = () => ({
 type ContentGetter = () => Promise<string | undefined>;
 
 // Each source map has a number of compiled sources referncing it.
-type SourceMapData = { compiled: Set<ISourceWithMap>; map?: SourceMap; loaded: Promise<void> };
+// type SourceMapData = { compiled: Set<ISourceWithMap>; map?: SourceMap; loaded: Promise<void> };
 export type SourceMapTimeouts = {
   // This is a source map loading delay used for testing.
   load: number;
@@ -87,6 +106,7 @@ export type SourceMapTimeouts = {
 
 /** Gets whether the URL is a compiled source containing a webpack HMR */
 const isWebpackHMR = (url: string) => url.endsWith('.hot-update.js');
+const isViteHmr = (url: string) => url.search('\\?t\\=') > -1;
 
 const defaultTimeouts: SourceMapTimeouts = {
   load: 0,
@@ -96,11 +116,62 @@ const defaultTimeouts: SourceMapTimeouts = {
   sourceMapCumulativePause: 10000,
 };
 
-export interface ISourceScript {
-  executionContextId: Cdp.Runtime.ExecutionContextId;
-  scriptId: Cdp.Runtime.ScriptId;
+export class Script {
   url: string;
-}
+  scriptId: string;
+  executionContextId: number;
+  source: SourceFromScript;
+  sourcePromise: Promise<SourceFromScript>;
+  container: SourceContainer
+
+  private readonly _contentGetter: ContentGetter;
+
+  constructor(
+    // contentGetter: ContentGetter,
+  ){
+    // this._contentGetter = once(contentGetter);
+  }
+
+  async content(): Promise<string | undefined> {
+    let content = await this._contentGetter();
+
+    // // pad for the inline source offset, see
+    // // https://github.com/microsoft/vscode-js-debug/issues/736
+    // if (this.inlineScriptOffset?.lineOffset) {
+    //   content = '\n'.repeat(this.inlineScriptOffset.lineOffset) + content;
+    // }
+
+    return content;
+  }
+  // source: Promise<Source>; // TODO: rename to content or remove
+  // resolvedSource?: Source;
+
+  /**
+  * Gets whether this script is blackboxed (part of the skipfiles).
+  */
+  public blackboxed(): boolean {
+    return this.container.isSourceSkipped(this.url);
+  }
+
+};
+
+export type ScriptWithSourceMapHandler = (
+  script: Script,
+  sources: Source[],
+) => Promise<IUiLocation[]>;
+export type SourceMapDisabler = (hitBreakpoints: string[]) => Source[];
+
+export type ScriptLocation = {
+  lineNumber: number; // 1-based
+  columnNumber: number; // 1-based
+  script: Script;
+};
+
+// export interface IScript {
+//   executionContextId: Cdp.Runtime.ExecutionContextId;
+//   scriptId: Cdp.Runtime.ScriptId;
+//   url: string;
+// }
 
 // Represents a text source visible to the user.
 //
@@ -119,7 +190,7 @@ export interface ISourceScript {
 //    compiled1._sourceMapSourceByUrl.get(sourceUrl) === source1
 //    source1._compiledToSourceUrl.get(compiled1) === sourceUrl
 //
-export class Source {
+export abstract class Source {
   public readonly sourceReference: number;
   private readonly _name: string;
   private readonly _fqname: string;
@@ -136,12 +207,11 @@ export class Source {
    */
   public readonly absolutePath: string;
 
-  public sourceMap?: ISourceWithMap['sourceMap'];
+  public outgoingSourceMap?: SourceMap
 
   // This is the same as |_absolutePath|, but additionally checks that file exists to
   // avoid errors when page refers to non-existing paths/urls.
   private readonly _existingAbsolutePath: Promise<string | undefined>;
-  private _scripts: ISourceScript[] = [];
 
   /**
    * @param inlineScriptOffset Offset of the start location of the script in
@@ -161,7 +231,6 @@ export class Source {
     public readonly url: string,
     absolutePath: string | undefined,
     contentGetter: ContentGetter,
-    sourceMapUrl?: string,
     public readonly inlineScriptOffset?: InlineScriptOffset,
     public readonly runtimeScriptOffset?: InlineScriptOffset,
     public readonly contentHash?: string,
@@ -172,7 +241,7 @@ export class Source {
     this.absolutePath = absolutePath || '';
     this._fqname = this._fullyQualifiedName();
     this._name = this._humanName();
-    this.setSourceMapUrl(sourceMapUrl);
+    // this.setSourceMapUrl(sourceMapUrl);
 
     this._existingAbsolutePath = checkContentHash(
       this.absolutePath,
@@ -182,43 +251,21 @@ export class Source {
     );
   }
 
-  public setSourceMapUrl(sourceMapUrl?: string) {
-    if (!sourceMapUrl) {
-      this.sourceMap = undefined;
-      return;
-    }
+  // public setSourceMapUrl(sourceMapUrl?: string) {
+  //   if (!sourceMapUrl) {
+  //     this.sourceMap = undefined;
+  //     return;
+  //   }
 
-    this.sourceMap = {
-      url: sourceMapUrl,
-      sourceByUrl: new Map(),
-      metadata: {
-        sourceMapUrl,
-        compiledPath: this.absolutePath || this.url,
-      },
-    };
-  }
-
-  /**
-   * Associated a script with this source. This is only valid for a source
-   * from the runtime, not a {@link SourceFromMap}.
-   */
-  addScript(script: ISourceScript): void {
-    this._scripts.push(script);
-  }
-
-  /**
-   * Filters scripts from a source, done when an execution context is removed.
-   */
-  filterScripts(fn: (s: ISourceScript) => boolean): void {
-    this._scripts = this._scripts.filter(fn);
-  }
-
-  /**
-   * Gets scripts associated with this source.
-   */
-  get scripts(): ReadonlyArray<ISourceScript> {
-    return this._scripts;
-  }
+  //   this.sourceMap = {
+  //     url: sourceMapUrl,
+  //     sourceByUrl: new Map(),
+  //     metadata: {
+  //       sourceMapUrl,
+  //       compiledPath: this.absolutePath || this.url,
+  //     },
+  //   };
+  // }
 
   /**
    * Gets a suggested mimetype for the source.
@@ -419,36 +466,360 @@ export class Source {
   }
 }
 
-/**
- * A Source that has an associated sourcemap.
- */
-export interface ISourceWithMap extends Source {
-  readonly sourceMap: {
-    url: string;
-    metadata: ISourceMapMetadata;
-    // When compiled source references a source map, we'll generate source map sources.
-    // This map |sourceUrl| as written in the source map itself to the Source.
-    // Only present on compiled sources, exclusive with |_origin|.
-    sourceByUrl: Map<string, SourceFromMap>;
-  };
-}
+// /**
+//  * A Source that has an associated sourcemap.
+//  */
+// export interface ISourceWithMap extends Source {
+//   readonly sourceMap: {
+//     url: string;
+//     metadata: ISourceMapMetadata;
+//     // When compiled source references a source map, we'll generate source map sources.
+//     // This map |sourceUrl| as written in the source map itself to the Source.
+//     // Only present on compiled sources, exclusive with |_origin|.
+//     sourceByUrl: Map<string, SourceFromMap>;
+//   };
+// }
 
 /**
  * A Source generated from a sourcemap. For example, a TypeScript input file
  * discovered from its compiled JavaScript code.
  */
+// export class SourceFromMap extends Source {
+//   // Sources generated from the source map are referenced by some compiled sources
+//   // (through a source map). This map holds the original |sourceUrl| as written in the
+//   // source map, which was used to produce this source for each compiled.
+//   public readonly compiledToSourceUrl = new Map<ISourceWithMap, string>();
+// }
+
+interface Sized{
+  size: number
+}
+
+class SizedIterator<T>{
+  constructor(private container: Sized, private iterator: IterableIterator<T>){}
+
+  get size(){
+    return this.container.size
+  }
+  public [Symbol.iterator] (){
+    return this.iterator
+  }
+  next(){
+    return this.iterator.next()
+  }
+}
+
+export class SourceFromScript extends Source {
+  readonly scriptByExecutionContext: Map<ExecutionContext, Script> = new Map();
+
+  // readonly scripts = this.scriptByExecutionContext.values
+
+  // /**
+  //  * Associated a script with this source. This is only valid for a source
+  //  * from the runtime, not a {@link SourceFromMap}.
+  //  */
+  // addScript(script: IScript): void {
+  //   this._scripts.push(script);
+  // }
+
+  // /**
+  //  * Filters scripts from a source, done when an execution context is removed.
+  //  */
+  // filterScripts(fn: (s: Script) => boolean): void {
+  //   this._scripts = this._scripts.filter(fn);
+  // }
+
+  /**
+   * Gets scripts associated with this source.
+   */
+  get scripts(): SizedIterator<Script> {
+    return new SizedIterator(this.scriptByExecutionContext, this.scriptByExecutionContext.values());
+  }
+
+  static async createFromScript(event: Cdp.Debugger.ScriptParsedEvent, thread: Thread, script: Script): Promise<SourceFromScript> {
+    let resolvedSourceMapUrl: string | undefined;
+    if (event.sourceMapURL) {
+      // Note: we should in theory refetch source maps with relative urls, if the base url has changed,
+      // but in practice that usually means new scripts with new source maps anyway.
+      resolvedSourceMapUrl = urlUtils.isDataUri(event.sourceMapURL)
+        ? event.sourceMapURL
+        : (event.url && urlUtils.completeUrl(event.url, event.sourceMapURL)) || event.url;
+      if (!resolvedSourceMapUrl) {
+        thread.dap.with(dap =>
+          errors.reportToConsole(dap, `Could not load source map from ${event.sourceMapURL}`),
+        );
+      }
+    }
+
+    // const absolutePath = await this._sourceContainer.sourcePathResolver.urlToAbsolutePath({ url: event.url });
+    // if(absolutePath){
+    //   const mappedSource = this._sourceContainer.getSourceByAbsolutePath(absolutePath)
+    //   if(mappedSource) {
+    //     if(resolvedSourceMapUrl){
+    //       mappedSource.setSourceMapUrl(resolvedSourceMapUrl)
+    //     }
+    //     mappedSource.addScript({
+    //       scriptId: event.scriptId,
+    //       url: event.url,
+    //       executionContextId: event.executionContextId,
+    //     });
+    //     // return mappedSource
+    //   }
+    // }
+
+    const contentGetter = async () => {
+      const response = await thread.cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
+      return response ? [response.scriptSource] : [];
+    };
+
+    const inlineSourceOffset =
+      event.startLine || event.startColumn
+        ? { lineOffset: event.startLine, columnOffset: event.startColumn }
+        : undefined;
+
+    // see https://github.com/microsoft/vscode/issues/103027
+    const runtimeScriptOffset = event.url.endsWith('#vscode-extension')
+      ? { lineOffset: 2, columnOffset: 0 }
+      : undefined;
+
+    const absolutePath = await thread.sourceContainer.sourcePathResolver.urlToAbsolutePath({ url: event.url });
+
+    // this.logger.verbose(LogTag.RuntimeSourceCreate, 'Creating source from url', {
+    //   inputUrl: url,
+    //   absolutePath,
+    // });
+
+    const source = new SourceFromScript(
+      thread.sourceContainer,
+      event.url,
+      absolutePath,
+      contentGetter,
+      inlineSourceOffset,
+      runtimeScriptOffset,
+      !event.hasSourceURL && thread.launchConfig.enableContentValidation ? event.hash : undefined,
+    );
+
+    thread.sourceContainer._addSource(source);
+    script.source = source
+
+
+    // resolvedSourceMapUrl &&
+    // thread.sourceContainer.sourcePathResolver.shouldResolveSourceMap({
+    //   resolvedSourceMapUrl,
+    //   compiledPath: absolutePath || event.url,
+    // })
+    //   ? resolvedSourceMapUrl
+    //   : undefined,
+
+    // const sourcePromise = thread.sourceContainer.addSource(
+    //   event.url,
+    //   contentGetter,
+    //   resolvedSourceMapUrl,
+    //   inlineSourceOffset,
+    //   runtimeScriptOffset,
+    //   // only include the script hash if content validation is enabled, and if
+    //   // the source does not have a redirected URL. In the latter case the
+    //   // original file won't have a `# sourceURL=...` comment, so the hash
+    //   // never matches: https://github.com/microsoft/vscode-js-debug/issues/1476
+    //   !event.hasSourceURL && thread.launchConfig.enableContentValidation ? event.hash : undefined,
+    // ).then(source => {
+    //   source.addScript(script)
+    //   return source
+    // })
+
+    // return sourcePromise;
+
+    return source
+  };
+}
+
 export class SourceFromMap extends Source {
   // Sources generated from the source map are referenced by some compiled sources
   // (through a source map). This map holds the original |sourceUrl| as written in the
   // source map, which was used to produce this source for each compiled.
-  public readonly compiledToSourceUrl = new Map<ISourceWithMap, string>();
+  public readonly compiledToSourceUrl = new Map<Source, string>();
+
+  public incommingSourceMaps: Set<SourceMap> = new Set();
+
+  // public get hasIncommingSourceMaps(){
+  //   return this.incommingSourceMaps.size > 0
+  // }
 }
 
-export const isSourceWithMap = (source: unknown): source is ISourceWithMap =>
-  !!source && source instanceof Source && !!source.sourceMap;
+export interface ISourceMapMetadata {
+  sourceMapUrl: string;
+  cacheKey?: number;
+  compiledPath: string;
+  loaded: IDeferred<void>
+}
 
-const isOriginalSourceOf = (compiled: Source, original: Source) =>
-  original instanceof SourceFromMap && original.compiledToSourceUrl.has(compiled as ISourceWithMap);
+/**
+ * Wrapper for a parsed sourcemap.
+ */
+export class SourceMap implements SourceMapConsumer {
+  private static idCounter = 0;
+
+  /**
+   * Map of aliased source names to the names in the `original` map.
+   */
+  private sourceActualToOriginal = new Map<string, string>();
+  private sourceOriginalToActual = new Map<string, string>();
+
+  // compiled: Set<Script> = new Set();
+
+  public pointsToByUrl = new Set<Source>();
+  public source: Source;
+
+  sourceByUrl = new Map();
+  finishLoading: Promise<void>
+
+  public get loaded(){
+    return this.deferred.hasSettled
+  }
+
+  /**
+   * Unique source map ID, used for cross-referencing.
+   */
+  public readonly id = SourceMap.idCounter++;
+
+  constructor(
+    private readonly original: BasicSourceMapConsumer | IndexedSourceMapConsumer,
+    public readonly metadata: Readonly<ISourceMapMetadata>,
+    private readonly actualRoot: string,
+    public readonly actualSources: ReadonlyArray<string>,
+    public readonly hasNames: boolean,
+    private deferred: IDeferred<void>,
+  ) {
+    if (actualSources.length !== original.sources.length) {
+      throw new Error(`Expected actualSources.length === original.source.length`);
+    }
+    this.finishLoading = deferred.promise
+
+    for (let i = 0; i < actualSources.length; i++) {
+      this.sourceActualToOriginal.set(actualSources[i], original.sources[i]);
+      this.sourceOriginalToActual.set(original.sources[i], actualSources[i]);
+    }
+  }
+
+  /**
+   * Gets the source filenames of the sourcemap. We preserve them out-of-bounds
+   * since the source-map library does normalization that destroys certain
+   * path segments.
+   *
+   * @see https://github.com/microsoft/vscode-js-debug/issues/479#issuecomment-634221103
+   */
+  public get sources() {
+    return this.actualSources.slice();
+  }
+
+  /**
+   * Gets the source root of the sourcemap.
+   */
+  public get sourceRoot() {
+    // see SourceMapFactory.loadSourceMap for what's happening here
+    return this.actualRoot;
+  }
+
+  /**
+   * Gets the source URL computed from the compiled path and the source root.
+   */
+  public computedSourceUrl(sourceUrl: string) {
+    return fixDriveLetterAndSlashes(
+      completeUrlEscapingRoot(
+        isDataUri(this.metadata.sourceMapUrl)
+          ? this.metadata.compiledPath
+          : this.metadata.sourceMapUrl,
+        this.sourceRoot + sourceUrl,
+      ),
+    );
+  }
+
+  /**
+   * @inheritdoc
+   */
+  computeColumnSpans(): void {
+    this.original.computeColumnSpans();
+  }
+
+  /**
+   * @inheritdoc
+   */
+  originalPositionFor(
+    generatedPosition: Position & { bias?: number | undefined },
+  ): NullableMappedPosition {
+    const mapped = this.original.originalPositionFor(generatedPosition);
+    if (mapped.source) {
+      mapped.source = this.sourceOriginalToActual.get(mapped.source) ?? mapped.source;
+    }
+
+    return mapped;
+  }
+
+  /**
+   * @inheritdoc
+   */
+  generatedPositionFor(
+    originalPosition: MappedPosition & { bias?: number | undefined },
+  ): NullablePosition {
+    return this.original.generatedPositionFor({
+      ...originalPosition,
+      source: this.sourceActualToOriginal.get(originalPosition.source) ?? originalPosition.source,
+    });
+  }
+
+  /**
+   * @inheritdoc
+   */
+  allGeneratedPositionsFor(originalPosition: MappedPosition): NullablePosition[] {
+
+    return this.original.allGeneratedPositionsFor({
+      ...originalPosition,
+      source: this.sourceActualToOriginal.get(originalPosition.source) ?? originalPosition.source,
+    });
+  }
+
+  /**
+   * @inheritdoc
+   */
+  hasContentsOfAllSources(): boolean {
+    return this.original.hasContentsOfAllSources();
+  }
+
+  /**
+   * @inheritdoc
+   */
+  sourceContentFor(source: string, returnNullOnMissing?: boolean | undefined): string | null {
+    return this.original.sourceContentFor(
+      this.sourceActualToOriginal.get(source) ?? source,
+      returnNullOnMissing,
+    );
+  }
+
+  /**
+   * @inheritdoc
+   */
+  eachMapping<ThisArg = void>(
+    callback: (this: ThisArg, mapping: MappingItem) => void,
+    context?: ThisArg,
+    order?: number | undefined,
+  ): void {
+    return this.original.eachMapping(callback, context, order);
+  }
+
+  /**
+   * @inheritdoc
+   */
+  destroy(): void {
+    this.original.destroy();
+  }
+}
+
+
+// export const isSourceWithMap = (source: unknown): source is ISourceWithMap =>
+//   !!source && source instanceof Source && !!source.outgoingSourceMaps.length && !(source.outgoingSourceMaps[0] instanceof DummySourceMap);
+
+const isCompiledSourceOf = (compiled: Source, original: Source) =>
+  compiled.outgoingSourceMap && original instanceof SourceFromMap && original.incommingSourceMaps.has(compiled.outgoingSourceMap);
 
 export interface IPreferredUiLocation extends IUiLocation {
   isMapped: boolean;
@@ -477,6 +848,29 @@ export enum UnmappedReason {
 
 const maxInt32 = 2 ** 31 - 1;
 
+export const ISourceMapFactory = Symbol('ISourceMapFactory');
+
+export interface ISourceWithMap extends Source {
+  outgoingSourceMap: SourceMap
+}
+/**
+ * Factory that loads source maps.
+ */
+export interface ISourceMapFactory extends IDisposable {
+  /**
+   * Loads the provided source map.
+   * @throws a {@link ProtocolError} if it cannot be parsed
+   */
+  load(metadata: ISourceMapMetadata): Promise<SourceMap>;
+
+  /**
+   * Guards a call to a source map invokation to catch parse errors. Sourcemap
+   * parsing happens lazily, so we need to wrap around their call sites.
+   * @see https://github.com/microsoft/vscode-js-debug/issues/483
+   */
+  guardSourceMapFn<T>(sourceMap: SourceMap, fn: () => T, defaultValue: () => T): T;
+}
+
 @injectable()
 export class SourceContainer {
   /**
@@ -498,7 +892,8 @@ export class SourceContainer {
   private _sourceByAbsolutePath: Map<string, Source> = utils.caseNormalizedMap();
 
   // All source maps by url.
-  _sourceMaps: Map<string, SourceMapData> = new Map();
+  _sourceMaps: Map<string, SourceMap> = new Map();
+  _sourcesBySourceMapUrl: Map<string, Source[]> = new Map();
   private _sourceMapTimeouts: SourceMapTimeouts = defaultTimeouts;
 
   // Test support.
@@ -564,10 +959,10 @@ export class SourceContainer {
 
   constructor(
     @inject(IDapApi) dap: Dap.Api,
-    @inject(ISourceMapFactory) private readonly sourceMapFactory: ISourceMapFactory,
+    @inject(ISourceMapFactory) public readonly sourceMapFactory: ISourceMapFactory,
     @inject(ILogger) private readonly logger: ILogger,
     @inject(AnyLaunchConfiguration) private readonly launchConfig: AnyLaunchConfiguration,
-    @inject(IInitializeParams) private readonly initializeConfig: Dap.InitializeParams,
+    @inject(IInitializeParams) public readonly initializeConfig: Dap.InitializeParams,
     @inject(ISourcePathResolver) public readonly sourcePathResolver: ISourcePathResolver,
     @inject(IScriptSkipper) public readonly scriptSkipper: ScriptSkipper,
     @inject(IResourceProvider) private readonly resourceProvider: IResourceProvider,
@@ -629,7 +1024,7 @@ export class SourceContainer {
   /**
    * Adds a new script to the source container.
    */
-  public addScriptById(script: Script) {
+  public addScript(script: Script) {
     this.scriptsById.set(script.scriptId, script);
     this.onScriptEmitter.fire(script);
   }
@@ -645,11 +1040,23 @@ export class SourceContainer {
     return this._sourceByAbsolutePath.get(absolutePath);
   }
 
+  public getSourceMapByUrl(url: string){
+    return this._sourceMaps.get(url)
+  }
+
+  public getSourcesByUrl(url: string){
+    return this._sourcesBySourceMapUrl.get(url)
+  }
+
   /**
    * Gets a source by its original URL from the debugger.
    */
   public getSourceByOriginalUrl(url: string) {
     return this._sourceByOriginalUrl.get(url);
+  }
+
+  public getScriptByOriginalUrl(url: string) {
+    return this._scriptByOriginalUrl.get(url);
   }
 
   /**
@@ -686,35 +1093,37 @@ export class SourceContainer {
    * This method returns a "preferred" location. This usually means going
    * through a source map and showing the source map source instead of a
    * compiled one. We use timeout to avoid waiting for the source map for too long.
+   * TODO: fix multi hop: e.g. compiled -> source -> pretty printed source (reason for the while loop) or refactor by introducing a sourcemap chain
    */
   public async preferredUiLocation(uiLocation: IUiLocation): Promise<IPreferredUiLocation> {
     let isMapped = false;
     let unmappedReason: UnmappedReason | undefined = UnmappedReason.CannotMap;
     if (this._doSourceMappedStepping) {
       while (true) {
-        if (!isSourceWithMap(uiLocation.source)) {
+        if (!uiLocation.source.outgoingSourceMap) {
           break;
         }
 
-        const sourceMap = this._sourceMaps.get(uiLocation.source.sourceMap.url);
+        // const sourceMap = this._sourceMaps.get(uiLocation.source.outgoingSourceMap.url);
+        const sourceMap = uiLocation.source.outgoingSourceMap
         if (
           !this.logger.assert(
             sourceMap,
-            `Expected to have sourcemap for loaded source ${uiLocation.source.sourceMap.url}`,
+            `Expected to have sourcemap for loaded source`// ${uiLocation.source.outgoingSourceMap.url}`,
           )
         ) {
           break;
         }
 
         await Promise.race([sourceMap.loaded, delay(this._sourceMapTimeouts.resolveLocation)]);
-        if (!sourceMap.map) return { ...uiLocation, isMapped, unmappedReason };
-        const sourceMapped = this._sourceMappedUiLocation(uiLocation, sourceMap.map);
+        // if (!sourceMap.map) return { ...uiLocation, isMapped, unmappedReason };
+        const sourceMapped = this._sourceMappedUiLocation(uiLocation, sourceMap);
         if (!isUiLocation(sourceMapped)) {
           unmappedReason = isMapped ? undefined : sourceMapped;
           break;
         }
 
-        uiLocation = sourceMapped;
+        uiLocation = sourceMapped
         isMapped = true;
         unmappedReason = undefined;
       }
@@ -754,7 +1163,7 @@ export class SourceContainer {
    * Returns all the possible locations the given location can map to or from,
    * taking into account source maps.
    */
-  private _uiLocations(uiLocation: IUiLocation): IUiLocation[] {
+  private _uiLocations(uiLocation: IUiLocation): (IUiLocation)[] {
     return [
       ...this.getSourceMapUiLocations(uiLocation),
       uiLocation,
@@ -764,10 +1173,12 @@ export class SourceContainer {
 
   /**
    * Returns all UI locations the given location maps to.
+   * TODO: this function is weird
    */
   public getSourceMapUiLocations(uiLocation: IUiLocation): IUiLocation[] {
-    if (!isSourceWithMap(uiLocation.source) || !this._doSourceMappedStepping) return [];
-    const map = this._sourceMaps.get(uiLocation.source.sourceMap.url)?.map;
+    // if (!uiLocation.source || isSourceWithMap(uiLocation.source) || !this._doSourceMappedStepping) return [];
+    // const map = this._sourceMaps.get(uiLocation.source.outgoingSourceMap.url)?.map;
+    const map = uiLocation.source?.outgoingSourceMap
     if (!map) return [];
     const sourceMapUiLocation = this._sourceMappedUiLocation(uiLocation, map);
     if (!isUiLocation(sourceMapUiLocation)) return [];
@@ -782,7 +1193,7 @@ export class SourceContainer {
     map: SourceMap,
   ): IUiLocation | UnmappedReason {
     const compiled = uiLocation.source;
-    if (!isSourceWithMap(compiled)) {
+    if (!compiled?.outgoingSourceMap) {
       return UnmappedReason.HasNoMap;
     }
 
@@ -806,7 +1217,7 @@ export class SourceContainer {
       return UnmappedReason.MapPositionMissing;
     }
 
-    const source = compiled.sourceMap.sourceByUrl.get(entry.source);
+    const source = map.sourceByUrl.get(entry.source);
     if (!source) {
       return UnmappedReason.MapPositionMissing;
     }
@@ -818,9 +1229,9 @@ export class SourceContainer {
     };
   }
 
-  public getCompiledLocationsFromSource(uiLocation: IUiLocation, inSource?: Source) {
+  public getCompiledLocationsFromSource(uiLocation: IUiLocation, inSource?: Source): IUiLocation[] {
     return this.getCompiledLocations(uiLocation).filter(
-      uiLocation => !inSource || uiLocation.source === inSource,
+      uiLoc => !inSource || uiLoc.source === inSource,
     );
   }
 
@@ -830,30 +1241,43 @@ export class SourceContainer {
 
   private getCompiledLocations(uiLocation: IUiLocation): IUiLocation[] {
     let source: Source | undefined = uiLocation.source;
-    if (!(source instanceof SourceFromMap)) {
-      // 'file:///C:/Users/Kerim/coding/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test.ts'
-      source = this._sourceMapSourcesByUrl.get(
-        utils.absolutePathToFileUrl(uiLocation.source.absolutePath),
-      );
-      if (source) {
-        console.log('found SourceFromMap by path');
-      }
-    }
+    // if (!(source instanceof SourceFromMap)) {
+    //   // 'file:///C:/Users/Kerim/coding/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test.ts'
+    //   source = this._sourceMapSourcesByUrl.get(
+    //     utils.absolutePathToFileUrl(uiLocation.source.absolutePath),
+    //   );
+    //   if (source) {
+    //     console.log('found SourceFromMap by path');
+    //   }
+    // }
     if (!(source instanceof SourceFromMap)) {
       return [];
     }
 
     let output: IUiLocation[] = [];
-    for (const [compiled, sourceUrl] of source.compiledToSourceUrl) {
-      const sourceMap = this._sourceMaps.get(compiled.sourceMap.url);
-      if (!sourceMap || !sourceMap.map) {
-        continue;
-      }
+    for (const sourceMap of source.incommingSourceMaps) {
+    // for (const [compiled, sourceUrl] of source.compiledToSourceUrl) {
+      // const sourceMap = this._sourceMaps.get(compiled.sourceMap.url);
+      // if (!sourceMap || !sourceMap.map) {
+      //   continue;
+      // }
+
+      const compiled = sourceMap.source
+
+      let sourceUrl: string | undefined
+
+      sourceMap.sourceByUrl.forEach((value, key) => {
+        if(value == source){
+          sourceUrl = key
+        }
+      })
+
+      if(!sourceUrl) sourceUrl = compiled.url; // todo: this maybe has to be relative to the sourcemap! Better would be to simply move this inside the sourcemap directly
 
       const entry = this.sourceMapFactory.guardSourceMapFn(
-        sourceMap.map,
+        sourceMap,
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        () => sourceUtils.getOptimalCompiledPosition(sourceUrl, uiLocation, sourceMap.map!),
+        () => sourceUtils.getOptimalCompiledPosition(sourceUrl, uiLocation, sourceMap),
         getFallbackPosition,
       );
 
@@ -884,13 +1308,13 @@ export class SourceContainer {
   /**
    * Gets the best original position for the location in the source map.
    */
-  public getOptiminalOriginalPosition(sourceMap: SourceMap, uiLocation: LineColumn) {
+  public getOptiminalOriginalPosition(sourceMap: SourceMap, scriptLocation: LineColumn) {
     return this.sourceMapFactory.guardSourceMapFn<NullableMappedPosition>(
       sourceMap,
       () => {
         const glb = sourceMap.originalPositionFor({
-          line: uiLocation.lineNumber,
-          column: uiLocation.columnNumber - 1,
+          line: scriptLocation.lineNumber,
+          column: scriptLocation.columnNumber - 1,
           bias: SourceMapConsumer.GREATEST_LOWER_BOUND,
         });
 
@@ -899,8 +1323,8 @@ export class SourceContainer {
         }
 
         return sourceMap.originalPositionFor({
-          line: uiLocation.lineNumber,
-          column: uiLocation.columnNumber - 1,
+          line: scriptLocation.lineNumber,
+          column: scriptLocation.columnNumber - 1,
           bias: SourceMapConsumer.LEAST_UPPER_BOUND,
         });
       },
@@ -908,51 +1332,27 @@ export class SourceContainer {
     );
   }
 
-  /**
-   * Adds a new source to the collection.
-   */
-  public async addSource(
-    url: string,
-    contentGetter: ContentGetter,
-    sourceMapUrl?: string,
-    inlineSourceRange?: InlineScriptOffset,
-    runtimeScriptOffset?: InlineScriptOffset,
-    contentHash?: string,
-  ): Promise<Source> {
-    const absolutePath = await this.sourcePathResolver.urlToAbsolutePath({ url });
+  // /**
+  //  * Adds a new source to the collection.
+  //  */
+  // public async addSource(
+  //   url: string,
+  //   contentGetter: ContentGetter,
+  //   sourceMapUrl?: string,
+  //   inlineSourceRange?: InlineScriptOffset,
+  //   runtimeScriptOffset?: InlineScriptOffset,
+  //   contentHash?: string,
+  // ): Promise<Source> {
 
-    this.logger.verbose(LogTag.RuntimeSourceCreate, 'Creating source from url', {
-      inputUrl: url,
-      absolutePath,
-    });
+  //   return source;
+  // }
 
-    const source = new Source(
-      this,
-      url,
-      absolutePath,
-      contentGetter,
-      sourceMapUrl &&
-      this.sourcePathResolver.shouldResolveSourceMap({
-        sourceMapUrl,
-        compiledPath: absolutePath || url,
-      })
-        ? sourceMapUrl
-        : undefined,
-      inlineSourceRange,
-      runtimeScriptOffset,
-      contentHash,
-    );
-
-    this._addSource(source);
-    return source;
-  }
-
-  private async _addSource(source: Source) {
+  public _addSource(source: Source) {
     // todo: we should allow the same source at multiple uri's if their scripts
     // have different executionContextId. We only really need the overwrite
     // behavior in Node for tools that transpile sources inline.
     const existingByUrl = source.url && this._sourceByOriginalUrl.get(source.url);
-    if (existingByUrl && !isOriginalSourceOf(existingByUrl, source)) {
+    if (existingByUrl && !isCompiledSourceOf(existingByUrl, source)) {
       this.removeSource(existingByUrl, true);
     }
 
@@ -967,101 +1367,25 @@ export class SourceContainer {
     // of internal prefixes. If we see a duplicate entries for an absolute path,
     // take the shorter of them.
     const existingByPath = this._sourceByAbsolutePath.get(source.absolutePath);
-    if (
-      existingByPath === undefined ||
-      existingByPath.url.length > source.url.length ||
-      isOriginalSourceOf(existingByPath, source)
-    ) {
+    // if (
+    //   existingByPath === undefined ||
+    //   existingByPath.url.length > source.url.length ||
+    //   isCompiledSourceOf(existingByPath, source)
+    // ) {
+    //   this._sourceByAbsolutePath.set(source.absolutePath, source);
+    // }
+
+    // simply take this one (newest)
+    if(!existingByPath || source instanceof SourceFromMap){
       this._sourceByAbsolutePath.set(source.absolutePath, source);
     }
-    this._sourceByAbsolutePath.set(source.absolutePath, source);
 
-    this.scriptSkipper.initializeSkippingValueForSource(source);
+    // this.scriptSkipper.initializeSkippingValueForSource(source);
     source.toDap().then(dap => this._dap.loadedSource({ reason: 'new', source: dap }));
-
-    if (!isSourceWithMap(source)) {
-      return;
-    }
-
-    const existingSourceMap = this._sourceMaps.get(source.sourceMap.url);
-    if (existingSourceMap) {
-      existingSourceMap.compiled.add(source);
-      if (existingSourceMap.map) {
-        // If source map has been already loaded, we add sources here.
-        // Otheriwse, we'll add sources for all compiled after loading the map.
-        await this._addSourceMapSources(source, existingSourceMap.map);
-      }
-      return;
-    }
-
-    const deferred = getDeferred<void>();
-    const sourceMap: SourceMapData = { compiled: new Set([source]), loaded: deferred.promise };
-    this._sourceMaps.set(source.sourceMap.url, sourceMap);
-
-    try {
-      sourceMap.map = await this.sourceMapFactory.load(source.sourceMap.metadata);
-    } catch (urlError) {
-      if (this.initializeConfig.clientID === 'visualstudio') {
-        // On VS we want to support loading source-maps from storage if the web-server doesn't serve them
-        const originalSourceMapUrl = source.sourceMap.metadata.sourceMapUrl;
-        try {
-          const sourceMapAbsolutePath = await this.sourcePathResolver.urlToAbsolutePath({
-            url: originalSourceMapUrl,
-          });
-
-          if (sourceMapAbsolutePath) {
-            source.sourceMap.metadata.sourceMapUrl =
-              utils.absolutePathToFileUrl(sourceMapAbsolutePath);
-          }
-
-          sourceMap.map = await this.sourceMapFactory.load(source.sourceMap.metadata);
-          this._statistics.fallbackSourceMapCount++;
-
-          this.logger.info(
-            LogTag.SourceMapParsing,
-            `Failed to process original source-map; falling back to storage source-map`,
-            {
-              fallbackSourceMapUrl: source.sourceMap.metadata.sourceMapUrl,
-              originalSourceMapUrl,
-              originalSourceMapError: extractErrorDetails(urlError),
-            },
-          );
-        } catch {}
-      }
-
-      if (!sourceMap.map) {
-        this._dap.output({
-          output: sourceMapParseFailed(source.url, urlError.message).error.format + '\n',
-          category: 'stderr',
-        });
-
-        return deferred.resolve();
-      }
-    }
-
-    // Source map could have been detached while loading.
-    if (this._sourceMaps.get(source.sourceMap.url) !== sourceMap) {
-      return deferred.resolve();
-    }
-
-    this.logger.verbose(LogTag.SourceMapParsing, 'Creating sources from source map', {
-      sourceMapId: sourceMap.map.id,
-      metadata: sourceMap.map.metadata,
-    });
-
-    const todo: Promise<void>[] = [];
-    for (const compiled of sourceMap.compiled) {
-      todo.push(this._addSourceMapSources(compiled, sourceMap.map));
-    }
-
-    await Promise.all(todo);
-
-    // re-initialize after loading source mapped sources
-    this.scriptSkipper.initializeSkippingValueForSource(source);
-    deferred.resolve();
   }
 
   public removeSource(source: Source, silent = false) {
+    return
     const existing = this._sourceByReference.get(source.sourceReference);
     if (existing === undefined) {
       return; // already removed
@@ -1081,12 +1405,12 @@ export class SourceContainer {
     if (source instanceof SourceFromMap) {
       this._sourceMapSourcesByUrl.delete(source.url);
       for (const [compiled, key] of source.compiledToSourceUrl) {
-        compiled.sourceMap.sourceByUrl.delete(key);
+        // compiled.sourceMap.sourceByUrl.delete(key)
       }
     }
 
     this._sourceByAbsolutePath.delete(source.absolutePath);
-    if (isSourceWithMap(source)) {
+    if (source.outgoingSourceMap) {
       this._permanentlyDisabledSourceMaps.delete(source);
       this._temporarilyDisabledSourceMaps.delete(source);
     }
@@ -1095,35 +1419,39 @@ export class SourceContainer {
       source.toDap().then(dap => this._dap.loadedSource({ reason: 'removed', source: dap }));
     }
 
-    if (!isSourceWithMap(source)) return;
+    // todo: enably again
+    return
 
-    const sourceMap = this._sourceMaps.get(source.sourceMap.url);
+    if (!source.outgoingSourceMap) return;
+
+    const sourceMap = source.outgoingSourceMap;
     if (
       !this.logger.assert(
         sourceMap,
-        `Source map missing for ${source.sourceMap.url} in removeSource()`,
+        `Source map missing for ${source.url} in removeSource()`,
       )
     ) {
       return;
     }
     this.logger.assert(
       sourceMap.compiled.has(source),
-      `Source map ${source.sourceMap.url} does not contain source ${source.url}`,
+      `Source map ${source.url} does not contain source ${source.url}`,
     );
 
     sourceMap.compiled.delete(source);
     if (!sourceMap.compiled.size) {
-      if (sourceMap.map) sourceMap.map.destroy();
-      this._sourceMaps.delete(source.sourceMap.url);
+      if (sourceMap) sourceMap.destroy();
+      this._sourceMaps.delete(source.outgoingSourceMap.url);
     }
     // Source map could still be loading, or failed to load.
-    if (sourceMap.map) {
-      this._removeSourceMapSources(source, sourceMap.map, silent);
+    if (sourceMap) {
+      this._removeSourceMapSources(source, sourceMap, silent);
     }
   }
 
-  async _addSourceMapSources(compiled: ISourceWithMap, map: SourceMap) {
+  async _addSourceMapSources(compiled: Script, map: SourceMap) {
     const todo: Promise<unknown>[] = [];
+    const sources: SourceFromMap[] = [];
     for (const url of map.sources) {
       const absolutePath = await this.sourcePathResolver.urlToAbsolutePath({ url, map });
       const resolvedUrl = absolutePath
@@ -1142,12 +1470,12 @@ export class SourceContainer {
       if (existing) {
         // In the case of a Webpack HMR, remove the old source entirely and
         // replace it with the new one.
-        if (isWebpackHMR(compiled.url)) {
-          this.removeSource(existing);
+        if (isWebpackHMR(compiled.url) || isViteHmr(compiled.url)) {
+          // this.removeSource(existing);
         } else {
-          existing.compiledToSourceUrl.set(compiled, url);
-          compiled.sourceMap.sourceByUrl.set(url, existing);
-          continue;
+          // existing.compiledToSourceUrl.set(compiled, url);
+          // existing.sourceByUrl.set(url, existing);
+          // continue;
         }
       }
 
@@ -1203,51 +1531,57 @@ export class SourceContainer {
           : () => compiled.content(),
         // Support recursive source maps if the source includes the source content.
         // This obviates the need for the `source-map-loader` in webpack for most cases.
-        sourceMapUrl,
         undefined,
         compiled.runtimeScriptOffset,
       );
-      source.compiledToSourceUrl.set(compiled, url);
-      compiled.sourceMap.sourceByUrl.set(url, source);
+
+      sources.push(source)
+      source.compiledToSourceUrl.set(source, url);
+      source.incommingSourceMaps.add(map)
+      // compiled.sourceMap.sourceByUrl.set(url, source);
+      map.sourceByUrl.set(url, source);
       todo.push(this._addSource(source));
     }
 
     await Promise.all(todo);
+    return sources
   }
 
-  private _removeSourceMapSources(compiled: ISourceWithMap, map: SourceMap, silent: boolean) {
+  private _removeSourceMapSources(compiled: Source, map: SourceMap, silent: boolean) {
     for (const url of map.sources) {
-      const source = compiled.sourceMap.sourceByUrl.get(url);
-      if (!source) {
-        // Previously, we would have always expected the source to exist here.
-        // However, with webpack HMR, we can unload sources that get replaced,
-        // so replaced sources will no longer exist in the map.
-        continue;
-      }
+      compiled.sourceMaps.forEach(smap => {
+        const source = smap.sourceByUrl.get(url);
+        if (!source) {
+          // Previously, we would have always expected the source to exist here.
+          // However, with webpack HMR, we can unload sources that get replaced,
+          // so replaced sources will no longer exist in the map.
+          return;
+        }
 
-      compiled.sourceMap.sourceByUrl.delete(url);
-      source.compiledToSourceUrl.delete(compiled);
-      if (source.compiledToSourceUrl.size) continue;
-      this.removeSource(source, silent);
+        // compiled.sourceMap.sourceByUrl.delete(url);
+        source.compiledToSourceUrl.delete(compiled);
+        if (source.compiledToSourceUrl.size) return;
+        this.removeSource(source, silent);
+      })
     }
   }
 
   // Waits for source map to be loaded (if any), and sources to be created from it.
-  public async waitForSourceMapSources(source: Source): Promise<Source[]> {
-    if (!isSourceWithMap(source)) {
-      return [];
-    }
+  // public async waitForSourceMapSources(source: Source): Promise<Source[]> {
+  //   if (!isSourceWithMap(source)) {
+  //     return [];
+  //   }
 
-    const sourceMap = this._sourceMaps.get(source.sourceMap.url);
-    if (
-      !this.logger.assert(sourceMap, 'Unrecognized source map url in waitForSourceMapSources()')
-    ) {
-      return [];
-    }
+  //   const sourceMap = this._sourceMaps.get(source.outgoingSourceMap.url);
+  //   if (
+  //     !this.logger.assert(sourceMap, 'Unrecognized source map url in waitForSourceMapSources()')
+  //   ) {
+  //     return [];
+  //   }
 
-    await sourceMap.loaded;
-    return [...source.sourceMap.sourceByUrl.values()];
-  }
+  //   await sourceMap.loaded;
+  //   return [...source.outgoingSourceMap.sourceByUrl.values()];
+  // }
 
   /**
    * Opens the UI location within the connected editor.
@@ -1264,7 +1598,7 @@ export class SourceContainer {
    * Disables the source map for the given source, either only until we
    * stop debugging within the file, or permanently.
    */
-  public disableSourceMapForSource(source: ISourceWithMap, permanent = false) {
+  public disableSourceMapForSource(source: Source, permanent = false) {
     if (permanent) {
       this._permanentlyDisabledSourceMaps.add(source);
     } else {
@@ -1275,7 +1609,7 @@ export class SourceContainer {
   /**
    * Clears temporarily disables maps for the sources.
    */
-  public clearDisabledSourceMaps(forSource?: ISourceWithMap) {
+  public clearDisabledSourceMaps(forSource?: Source) {
     if (forSource) {
       this._temporarilyDisabledSourceMaps.delete(forSource);
     } else {
@@ -1323,3 +1657,271 @@ export const base1To0 = (lc: LineColumn) => ({
   lineNumber: lc.lineNumber - 1,
   columnNumber: lc.columnNumber - 1,
 });
+
+
+
+interface RawExternalSection {
+  offset: Position;
+  url: string;
+}
+
+/**
+ * The typings for source-map don't support this, but the spec does.
+ * @see https://sourcemaps.info/spec.html#h.535es3xeprgt
+ */
+export interface RawIndexMapUnresolved extends StartOfSourceMap {
+  version: number;
+  sections: (RawExternalSection | RawSection)[];
+}
+
+/**
+ * Base implementation of the ISourceMapFactory.
+ */
+@injectable()
+export class SourceMapFactory implements ISourceMapFactory {
+  /**
+   * A set of sourcemaps that we warned about failing to parse.
+   * @see ISourceMapFactory#guardSourceMapFn
+   */
+  private hasWarnedAboutMaps = new WeakSet<SourceMap>();
+
+  constructor(
+    @inject(ISourcePathResolver) private readonly pathResolve: ISourcePathResolver,
+    @inject(IResourceProvider) private readonly resourceProvider: IResourceProvider,
+    @inject(IRootDapApi) protected readonly dap: Dap.Api,
+    @inject(ILogger) private readonly logger: ILogger,
+  ) {}
+
+  /**
+   * @inheritdoc
+   */
+  public async load(metadata: ISourceMapMetadata): Promise<SourceMap> {
+    const basic = await this.parseSourceMap(metadata.sourceMapUrl);
+
+    // The source-map library is destructive with its sources parsing. If the
+    // source root is '/', it'll "helpfully" resolve a source like `../foo.ts`
+    // to `/foo.ts` as if the source map refers to the root of the filesystem.
+    // This would prevent us from being able to see that it's actually in
+    // a parent directory, so we make the sourceRoot empty but show it here.
+    const actualRoot = basic.sourceRoot;
+    basic.sourceRoot = undefined;
+
+    let hasNames = false;
+
+    // The source map library (also) "helpfully" normalizes source URLs, so
+    // preserve them in the same way. Then, rename the sources to prevent any
+    // of their names colliding (e.g. "webpack://./index.js" and "webpack://../index.js")
+    let actualSources: string[] = [];
+    if ('sections' in basic) {
+      actualSources = [];
+      let i = 0;
+      for (const section of basic.sections) {
+        actualSources.push(...section.map.sources);
+        section.map.sources = section.map.sources.map(() => `source${i++}.js`);
+        hasNames ||= !!section.map.names?.length;
+      }
+    } else if ('sources' in basic && Array.isArray(basic.sources)) {
+      actualSources = basic.sources;
+      basic.sources = basic.sources.map((_, i) => `source${i}.js`);
+      hasNames = !!basic.names?.length;
+    }
+
+    return new SourceMap(
+      await new SourceMapConsumer(basic),
+      metadata,
+      actualRoot ?? '',
+      actualSources,
+      hasNames,
+      metadata.loaded
+    );
+  }
+
+  private async parseSourceMap(sourceMapUrl: string): Promise<RawSourceMap | RawIndexMap> {
+    let sm: RawSourceMap | RawIndexMapUnresolved | undefined;
+    try {
+      sm = await this.parseSourceMapDirect(sourceMapUrl);
+    } catch (e) {
+      sm = await this.parsePathMappedSourceMap(sourceMapUrl);
+      if (!sm) {
+        throw e;
+      }
+    }
+
+    if ('sections' in sm) {
+      const resolved = await Promise.all(
+        sm.sections.map((s, i) =>
+          'url' in s
+            ? this.parseSourceMap(s.url)
+                .then(map => ({ offset: s.offset, map: map as RawSourceMap }))
+                .catch(e => {
+                  this.logger.warn(LogTag.SourceMapParsing, `Error parsing nested map ${i}: ${e}`);
+                  return undefined;
+                })
+            : s,
+        ),
+      );
+
+      sm.sections = resolved.filter(truthy);
+    }
+
+    return sm as RawSourceMap | RawIndexMap;
+  }
+
+  public async parsePathMappedSourceMap(url: string) {
+    if (isDataUri(url)) {
+      return;
+    }
+
+    const localSourceMapUrl = await this.pathResolve.urlToAbsolutePath({ url });
+    if (!localSourceMapUrl) return;
+
+    try {
+      return this.parseSourceMapDirect(localSourceMapUrl);
+    } catch (error) {
+      this.logger.info(LogTag.SourceMapParsing, 'Parsing path mapped source map failed.', error);
+    }
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public guardSourceMapFn<T>(sourceMap: SourceMap, fn: () => T, defaultValue: () => T): T {
+    try {
+      return fn();
+    } catch (e) {
+      if (!/error parsing/i.test(String(e.message))) {
+        throw e;
+      }
+
+      if (!this.hasWarnedAboutMaps.has(sourceMap)) {
+        const message = sourceMapParseFailed(sourceMap.metadata.compiledPath, e.message).error;
+        this.dap.output({
+          output: message.format + '\n',
+          category: 'stderr',
+        });
+        this.hasWarnedAboutMaps.add(sourceMap);
+      }
+
+      return defaultValue();
+    }
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public dispose() {
+    // no-op
+  }
+
+  private async parseSourceMapDirect(
+    sourceMapUrl: string,
+  ): Promise<RawSourceMap | RawIndexMapUnresolved> {
+    let absolutePath = fileUrlToAbsolutePath(sourceMapUrl);
+    if (absolutePath) {
+      absolutePath = this.pathResolve.rebaseRemoteToLocal(absolutePath);
+    }
+
+    const content = await this.resourceProvider.fetch(absolutePath || sourceMapUrl);
+    if (!content.ok) {
+      throw content.error;
+    }
+
+    let body = content.body;
+    if (body.slice(0, 3) === ')]}') {
+      body = body.substring(body.indexOf('\n'));
+    }
+
+    return JSON.parse(body);
+  }
+}
+
+/**
+ * A cache of source maps shared between the Thread and Predictor to avoid
+ * duplicate loading.
+ */
+@injectable()
+export class CachingSourceMapFactory extends SourceMapFactory {
+  private readonly knownMaps = new MapUsingProjection<
+    string,
+    {
+      metadata: ISourceMapMetadata;
+      reloadIfNoMtime: boolean;
+      prom: Promise<SourceMap>;
+    }
+  >(s => s.toLowerCase());
+
+  /**
+   * Sourcemaps who have been overwritten by newly loaded maps. We can't
+   * destroy these since sessions might still references them. Once finalizers
+   * are available this can be removed.
+   */
+  private overwrittenSourceMaps: Promise<SourceMap>[] = [];
+
+  /**
+   * @inheritdoc
+   */
+  public load(metadata: ISourceMapMetadata): Promise<SourceMap> {
+    const existing = this.knownMaps.get(metadata.sourceMapUrl);
+    if (!existing) {
+      return this.loadNewSourceMap(metadata);
+    }
+
+    const curKey = metadata.cacheKey;
+    const prevKey = existing.metadata.cacheKey;
+    // If asked to reload, do so if either map is missing a mtime, or they aren't the same
+    if (existing.reloadIfNoMtime) {
+      if (!(curKey && prevKey && curKey === prevKey)) {
+        this.overwrittenSourceMaps.push(existing.prom);
+        return this.loadNewSourceMap(metadata);
+      } else {
+        existing.reloadIfNoMtime = false;
+        return existing.prom;
+      }
+    }
+
+    // Otherwise, only reload if times are present and the map definitely changed.
+    if (prevKey && curKey && curKey !== prevKey) {
+      this.overwrittenSourceMaps.push(existing.prom);
+      return this.loadNewSourceMap(metadata);
+    }
+
+    return existing.prom;
+  }
+
+  private loadNewSourceMap(metadata: ISourceMapMetadata) {
+    const created = super.load(metadata);
+    this.knownMaps.set(metadata.sourceMapUrl, { metadata, reloadIfNoMtime: false, prom: created });
+    return created;
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public dispose() {
+    for (const map of this.knownMaps.values()) {
+      map.prom.then(
+        m => m.destroy(),
+        () => undefined,
+      );
+    }
+
+    for (const map of this.overwrittenSourceMaps) {
+      map.then(
+        m => m.destroy(),
+        () => undefined,
+      );
+    }
+
+    this.knownMaps.clear();
+  }
+
+  /**
+   * Invalidates all source maps that *don't* have associated mtimes, so that
+   * they're reloaded the next time they're requested.
+   */
+  public invalidateCache() {
+    for (const map of this.knownMaps.values()) {
+      map.reloadIfNoMtime = true;
+    }
+  }
+}

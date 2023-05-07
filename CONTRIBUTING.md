@@ -26,3 +26,86 @@ For debugging the companion app used to launch browsers from remotes, the proces
 - Run `npm run watch` for the companion.
 - Run the `Extension and Companion` launch configuration.
 - Set `"browserLaunchLocation": "ui"` in your launch.json to route requests through the companion extension.
+
+## Getting Started
+
+Main components for this project are: Scripts, Sources, SourceMaps, the SourceContainter, Locations and Breakpoints
+A Script represents a unit parsed and executed by chrome/node. It can be a plain js file, a js file containing a sourcemap which was compiled by a bundler or even a wasm module.
+A Source represents a source code file which was compiled by build tools into Script, the original code before compilation or e.g. a pretty printed version of either compiled or original code.
+SourceFromScript
++script
+SourceFromMap
++map
+
+Alternative:
+
+Script
+
+Source
+
+ISourceMap
+>ComposedSourceMap
+
+>JSSourceMap
+
+>DwarfSourceMap
+
+>DummySourceMap
+
+e.g. Script --> JsSourceMap --> local Sourcefile
+e.g. Script --> ComposedMap --> Pretty printed Source
+e.g. Script --> DummySourceMap --> Source contents from Script
+e.g. Script --> DwarfSourceMap --> local Sourcefile
+
+Local source Files
+some sourcemaps ic
+
+<!-- SourceFromMap // SourceFile that cannot be found on disk or is content is different compared to disk. Its content is fetched from the runtime -->
+
+A SourceMap maps Locations between two sources.
+A SourceFromMap can be pointed at from multiple SourceMaps. E.g. a module imported in many other modules. This is especially the case with inlined functions in wasm.
+A SourceFromScript however only has one SourceMap pointing to many Sources.
+
+SourceContainer
+
+### When a Script is parsed
+
+We check if theres an sourcemap, if so load the sourcemap and find/load the sourcefiles
+if the sourcefile cant be found we log an error.
+If no sourcemap is found or associated sources arent found we try to fetch the scripts contents and make a source from it linking it via a DummySourceMap
+
+### When a Script is pretty printed
+
+This could mean Script -> SourceMap -> SourceFile -> PrettyPrintedMap -> PrettySource
+So theres a field:  PrettyPrintedMap.priorMap that will be called first
+
+Script -> PrettyPrintedMap -> PrettySource
+
+What about Script.SourceMap?
+SourceContainer.chainedMaps
+Maps the Script.SourceMap to PrettyPrintedMap
+
+or ComposedMap?
+
+Which Source to choose: from script, from file, from prettyprint ... ?
+
+What are those cases?
+
+### When a breakpoint is set
+
+### When a breakpoint is hit
+
+### While a SourceMap is loading
+
+### Locations
+
+There are ScriptLocations, which refer to locations in a executed module, and UILocations which are Locations inside corresponding Sources
+
+
+cdp means chrome developer tools
+dap represents a debugger adapter protocol representing a api to vscodes debug UI
+
+important functions are
+
+Thread._onScriptParsed which is fired when chrome runtime parsed a new js or wasm file
+Thread._onPaused is fired e.g. when a breakpoint is hit

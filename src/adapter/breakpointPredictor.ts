@@ -10,8 +10,9 @@ import { EventEmitter } from '../common/events';
 import { OutFiles } from '../common/fileGlobList';
 import { ILogger, LogTag } from '../common/logging';
 import { fixDriveLetterAndSlashes, forceForwardSlashes } from '../common/pathUtils';
-import { ISourceMapMetadata } from '../common/sourceMaps/sourceMap';
-import { ISourceMapFactory } from '../common/sourceMaps/sourceMapFactory';
+// import { ISourceMapMetadata } from '../common/sourceMaps/sourceMap';
+// import { ISourceMapFactory } from '../common/sourceMaps/sourceMapFactory';
+import { ISourceMapFactory, ISourceMapMetadata } from "../adapter/sources";
 import {
   ISearchStrategy,
   ISearchStrategyFallback,

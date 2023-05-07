@@ -20,12 +20,9 @@ import { AnyLaunchConfiguration } from '../../configuration';
 import Dap from '../../dap/api';
 import { ITarget } from '../../targets/targets';
 import {
-  ISourceScript,
-  ISourceWithMap,
+  Script,
   Source,
-  SourceContainer,
-  SourceFromMap,
-  isSourceWithMap,
+  SourceContainer
 } from '../sources';
 import { getSourceSuffix } from '../templates';
 import { simpleGlobsToRe } from './simpleGlobToRe';
@@ -206,13 +203,13 @@ export class ScriptSkipper {
 
   private async _updateSourceWithSkippedSourceMappedSources(
     source: ISourceWithMap,
-    scripts: readonly ISourceScript[],
+    scripts: readonly Script[],
   ): Promise<void> {
     // Order "should" be correct
     const parentIsSkipped = this.isScriptSkipped(source.url);
     const skipRanges: Cdp.Debugger.ScriptPosition[] = [];
     let inSkipRange = parentIsSkipped;
-    Array.from(source.sourceMap.sourceByUrl.values()).forEach(authoredSource => {
+    Array.from(source.outgoingSourceMap.sourceByUrl.values()).forEach(authoredSource => {
       let isSkippedSource = this.isScriptSkipped(authoredSource.url);
       if (typeof isSkippedSource === 'undefined') {
         // If not toggled or specified in launch config, inherit the parent's status
@@ -273,15 +270,15 @@ export class ScriptSkipper {
       this._updateSkippedDebounce();
     }
 
-    if (isSourceWithMap(source)) {
+    if (source.outgoingSourceMap) {
       if (skipped) {
         // if compiled and skipped, also skip authored sources
-        for (const authoredSource of source.sourceMap.sourceByUrl.values()) {
+        for (const authoredSource of source.outgoingSourceMap.sourceByUrl.values()) {
           this._isUrlFromSourceMapSkipped.set(authoredSource.url, true);
         }
       }
 
-      for (const nestedSource of source.sourceMap.sourceByUrl.values()) {
+      for (const nestedSource of source.outgoingSourceMap.sourceByUrl.values()) {
         this._initializeSkippingValueForSource(nestedSource, scripts);
       }
 
@@ -338,9 +335,9 @@ export class ScriptSkipper {
         ),
       );
     } else {
-      if (isSourceWithMap(source)) {
+      if (source.outgoingSourceMap) {
         // if compiled, get authored sources
-        for (const authoredSource of source.sourceMap.sourceByUrl.values()) {
+        for (const authoredSource of source.outgoingSourceMap.sourceByUrl.values()) {
           this._isUrlFromSourceMapSkipped.set(authoredSource.url, newSkipValue);
         }
       }

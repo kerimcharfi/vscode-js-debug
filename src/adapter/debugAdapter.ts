@@ -36,7 +36,7 @@ import { BasicCpuProfiler } from './profiling/basicCpuProfiler';
 import { ScriptSkipper } from './scriptSkipper/implementation';
 import { IScriptSkipper } from './scriptSkipper/scriptSkipper';
 import { SmartStepper } from './smartStepping';
-import { ISourceWithMap, SourceContainer, SourceFromMap } from './sources';
+import { SourceContainer, SourceFromMap, SourceFromScript } from './sources';
 import { Thread } from './threads';
 import { VariableStore } from './variableStore';
 
@@ -106,7 +106,7 @@ export class DebugAdapter implements IDisposable {
     this.dap.on('prettyPrintSource', params => this._prettyPrintSource(params));
     this.dap.on('revealPage', () => this._withThread(thread => thread.revealPage()));
     this.dap.on('getPerformance', () =>
-      this._withThread(thread => performanceProvider.retrieve(thread.cdp())),
+      this._withThread(thread => performanceProvider.retrieve(thread.cdp)),
     );
     this.dap.on('breakpointLocations', params => this._breakpointLocations(params));
     this.dap.on('createDiagnostics', params => this._dumpDiagnostics(params));
@@ -122,14 +122,14 @@ export class DebugAdapter implements IDisposable {
   private _setDebuggerProperty(
     params: Dap.SetDebuggerPropertyParams,
   ): Promise<Dap.SetDebuggerPropertyResult> {
-    this._thread?.cdp().DotnetDebugger.setDebuggerProperty(params);
+    this._thread?.cdp.DotnetDebugger.setDebuggerProperty(params);
     return Promise.resolve({});
   }
 
   private _setSymbolOptions(
     params: Dap.SetSymbolOptionsParams,
   ): Promise<Dap.SetSymbolOptionsResult> {
-    this._thread?.cdp().DotnetDebugger.setSymbolOptions(params);
+    this._thread?.cdp.DotnetDebugger.setSymbolOptions(params);
     return Promise.resolve({});
   }
 
@@ -301,7 +301,7 @@ export class DebugAdapter implements IDisposable {
       return errors.createSilentError(l10n.t('Source not a source map'));
     }
 
-    for (const compiled of source.compiledToSourceUrl.keys()) {
+    for (const compiled of [...source.incommingSourceMaps].map(sm => sm.source)) {
       this.sourceContainer.disableSourceMapForSource(compiled, /* permanent= */ true);
     }
 

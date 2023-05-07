@@ -154,9 +154,9 @@ const SourceData: FunctionComponent<{
     </dd>
     <dt>sourcemap children:</dt>
     <dd>
-      {source.sourceMap ? (
+      {source.outgoingSourceMap ? (
         <ul>
-          {Object.entries(source.sourceMap.sources).map(([url, ref]) => (
+          {Object.entries(source.outgoingSourceMap.sources).map(([url, ref]) => (
             <li key={url}>
               <ReferencedSource url={url} sourceRef={ref} pick={open} />
             </li>

@@ -11,8 +11,8 @@ import Dap from '../dap/api';
 import { asyncScopesNotAvailable } from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
 import { StackFrameStepOverReason, shouldStepOverStackFrame } from './smartStepping';
-import { IPreferredUiLocation } from './sources';
-import { RawLocation, Thread } from './threads';
+import { IPreferredUiLocation, ScriptLocation } from './sources';
+import { Thread } from './threads';
 import { IExtraProperty, IScopeRef, IVariableContainer } from './variableStore';
 
 export interface IFrameElement {
@@ -110,11 +110,11 @@ export class StackTrace {
       }
       if (noFuncEval)
         this._lastFrameThread
-          .cdp()
+          .cdp
           .DotnetDebugger.setEvaluationOptions({ options: { noFuncEval }, type: 'stackFrame' });
 
       const response = await this._lastFrameThread
-        .cdp()
+        .cdp
         .Debugger.getStackTrace({ stackTraceId: this._asyncStackTraceId });
       this._asyncStackTraceId = undefined;
       if (response) this._appendStackTrace(this._lastFrameThread, response.stackTrace);
@@ -230,7 +230,7 @@ export class StackFrame implements IFrameElement {
   public readonly frameId = frameIdCounter();
 
   private _name: string;
-  private _rawLocation: RawLocation;
+  private _scriptLocation: ScriptLocation;
   public readonly uiLocation: () =>
     | Promise<IPreferredUiLocation | undefined>
     | IPreferredUiLocation
@@ -240,8 +240,8 @@ export class StackFrame implements IFrameElement {
   public readonly isReplEval: boolean;
 
   public get rawPosition() {
-    // todo: move RawLocation to use Positions, then just return that.
-    return new Base0Position(this._rawLocation.lineNumber, this._rawLocation.columnNumber);
+    // todo: move ScriptLocation to use Positions, then just return that.
+    return new Base0Position(this._scriptLocation.lineNumber, this._scriptLocation.columnNumber);
   }
 
   static fromRuntime(
@@ -249,11 +249,11 @@ export class StackFrame implements IFrameElement {
     callFrame: Cdp.Runtime.CallFrame,
     isAsync: boolean,
   ): StackFrame {
-    return new StackFrame(thread, callFrame, thread.rawLocation(callFrame), isAsync);
+    return new StackFrame(thread, callFrame, thread.scriptLocation(callFrame), isAsync);
   }
 
   static fromDebugger(thread: Thread, callFrame: Cdp.Debugger.CallFrame): StackFrame {
-    const result = new StackFrame(thread, callFrame, thread.rawLocation(callFrame));
+    const result = new StackFrame(thread, callFrame, thread.scriptLocation(callFrame));
     result._scope = {
       chain: callFrame.scopeChain,
       thisObject: callFrame.this,
@@ -267,16 +267,15 @@ export class StackFrame implements IFrameElement {
 
   constructor(
     thread: Thread,
-    private readonly callFrame: Cdp.Debugger.CallFrame | Cdp.Runtime.CallFrame,
-    rawLocation: RawLocation,
+    public readonly callFrame: Cdp.Debugger.CallFrame | Cdp.Runtime.CallFrame,
+    scriptLocation: ScriptLocation,
     private readonly isAsync = false,
   ) {
     this._name = callFrame.functionName || '<anonymous>';
-    this._rawLocation = rawLocation;
-    this.uiLocation = once(() => thread.rawLocationToUiLocation(rawLocation));
+    this._scriptLocation = scriptLocation;
+    this.uiLocation = once(() => thread.scriptLocationToUiLocation(scriptLocation));
     this._thread = thread;
-    const script = rawLocation.scriptId ? thread.getScriptById(rawLocation.scriptId) : undefined;
-    this.isReplEval = script ? script.url.endsWith(SourceConstants.ReplExtension) : false;
+    this.isReplEval = scriptLocation.script?.url.endsWith(SourceConstants.ReplExtension) ?? false;
   }
 
   /**
@@ -292,9 +291,9 @@ export class StackFrame implements IFrameElement {
   public equivalentTo(other: unknown) {
     return (
       other instanceof StackFrame &&
-      other._rawLocation.columnNumber === this._rawLocation.columnNumber &&
-      other._rawLocation.lineNumber === this._rawLocation.lineNumber &&
-      other._rawLocation.scriptId === this._rawLocation.scriptId
+      other._scriptLocation.columnNumber === this._scriptLocation.columnNumber &&
+      other._scriptLocation.lineNumber === this._scriptLocation.lineNumber &&
+      other._scriptLocation.script.scriptId === this._scriptLocation.script.scriptId
     );
   }
 
@@ -368,16 +367,16 @@ export class StackFrame implements IFrameElement {
           variablesReference: variable.id,
         };
         if (scope.startLocation) {
-          const startRawLocation = this._thread.rawLocation(scope.startLocation);
-          const startUiLocation = await this._thread.rawLocationToUiLocation(startRawLocation);
-          dap.line = (startUiLocation || startRawLocation).lineNumber;
-          dap.column = (startUiLocation || startRawLocation).columnNumber;
-          if (startUiLocation) dap.source = await startUiLocation.source.toDap();
+          const startScriptLocation = this._thread.scriptLocation(scope.startLocation);
+          const startUiLocation = await this._thread.scriptLocationToUiLocation(startScriptLocation);
+          dap.line = (startUiLocation || startScriptLocation).lineNumber;
+          dap.column = (startUiLocation || startScriptLocation).columnNumber;
+          if (startUiLocation?.source) dap.source = await startUiLocation.source.toDap();
           if (scope.endLocation) {
-            const endRawLocation = this._thread.rawLocation(scope.endLocation);
-            const endUiLocation = await this._thread.rawLocationToUiLocation(endRawLocation);
-            dap.endLine = (endUiLocation || endRawLocation).lineNumber;
-            dap.endColumn = (endUiLocation || endRawLocation).columnNumber;
+            const endScriptLocation = this._thread.scriptLocation(scope.endLocation);
+            const endUiLocation = await this._thread.scriptLocationToUiLocation(endScriptLocation);
+            dap.endLine = (endUiLocation || endScriptLocation).lineNumber;
+            dap.endColumn = (endUiLocation || endScriptLocation).columnNumber;
           }
         }
         return dap;
@@ -390,7 +389,7 @@ export class StackFrame implements IFrameElement {
   /** @inheritdoc */
   async toDap(format?: Dap.StackFrameFormat): Promise<Dap.StackFrame> {
     const uiLocation = await this.uiLocation();
-    const source = uiLocation ? await uiLocation.source.toDap() : undefined;
+    const source = uiLocation?.source ? await uiLocation.source.toDap() : undefined;
     const isSmartStepped = await shouldStepOverStackFrame(this);
     const presentationHint = isSmartStepped ? 'deemphasize' : 'normal';
     if (isSmartStepped && source) {
@@ -400,8 +399,8 @@ export class StackFrame implements IFrameElement {
           : l10n.t('Skipped by skipFiles');
     }
 
-    const line = (uiLocation || this._rawLocation).lineNumber;
-    const column = (uiLocation || this._rawLocation).columnNumber;
+    const line = (uiLocation || this._scriptLocation).lineNumber;
+    const column = (uiLocation || this._scriptLocation).columnNumber;
 
     let formattedName = this._name;
 
@@ -435,7 +434,7 @@ export class StackFrame implements IFrameElement {
       (await uiLocation?.source.existingAbsolutePath()) ||
       (await uiLocation?.source.prettyName()) ||
       this.callFrame.url;
-    const { lineNumber, columnNumber } = uiLocation || this._rawLocation;
+    const { lineNumber, columnNumber } = uiLocation || this._scriptLocation;
     return `    at ${this._name} (${url}:${lineNumber}:${columnNumber})`;
   }
 
@@ -443,7 +442,7 @@ export class StackFrame implements IFrameElement {
   async format(): Promise<string> {
     const uiLocation = await this.uiLocation();
     const prettyName = (await uiLocation?.source.prettyName()) || '<unknown>';
-    const anyLocation = uiLocation || this._rawLocation;
+    const anyLocation = uiLocation || this._scriptLocation;
     let text = `${this._name} @ ${prettyName}:${anyLocation.lineNumber}`;
     if (anyLocation.columnNumber > 1) text += `:${anyLocation.columnNumber}`;
     return text;

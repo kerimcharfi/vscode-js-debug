@@ -4,6 +4,7 @@
 
 import * as l10n from '@vscode/l10n';
 import { randomBytes } from 'crypto';
+import type Protocol from 'devtools-protocol/types/protocol';
 import Cdp from '../cdp/api';
 import { DebugType } from '../common/contributionUtils';
 import { EventEmitter } from '../common/events';
@@ -39,13 +40,27 @@ import { PreviewContextType, getContextForType } from './objectPreview/contexts'
 import { SmartStepper } from './smartStepping';
 
 import {
+  RuntimeStackFrame,
+  WebAssemblyDebugState,
+} from '../dwarf/core/DebugCommand';
+
+import {
+  PausedDebugSessionState,
+} from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
+
+import { sourceMapParseFailed } from '../dap/errors';
+import {
   IPreferredUiLocation,
-  ISourceWithMap,
+  ISourceMapMetadata,
   IUiLocation,
-  Source,
+  Script,
+  ScriptLocation,
   SourceContainer,
+  SourceFromScript,
+  SourceMap,
+  SourceMapDisabler,
   base1To0,
-  rawToUiOffset,
+  rawToUiOffset
 } from './sources';
 import { StackFrame, StackTrace } from './stackTrace';
 import {
@@ -102,8 +117,9 @@ export class ExecutionContext {
     await Promise.all(
       this.scripts.map(async s => {
         const source = await s.source;
-        source.filterScripts(s => s.executionContextId !== this.description.id);
-        if (!source.scripts.length) {
+        // source.filterScripts(s => s.executionContextId !== this.description.id);
+        source.scriptByExecutionContext.delete(this)
+        if (!source.scripts.size) {
           container.removeSource(source);
         }
       }),
@@ -111,25 +127,6 @@ export class ExecutionContext {
   }
 }
 
-export type Script = {
-  url: string;
-  scriptId: string;
-  executionContextId: number;
-  source: Promise<Source>;
-  resolvedSource?: Source;
-};
-
-export type ScriptWithSourceMapHandler = (
-  script: Script,
-  sources: Source[],
-) => Promise<IUiLocation[]>;
-export type SourceMapDisabler = (hitBreakpoints: string[]) => ISourceWithMap[];
-
-export type RawLocation = {
-  lineNumber: number; // 1-based
-  columnNumber: number; // 1-based
-  scriptId: Cdp.Runtime.ScriptId;
-};
 
 class DeferredContainer<T> {
   private _dapDeferred: IDeferred<T> = getDeferred();
@@ -160,12 +157,96 @@ const getReplSourceSuffix = () =>
     sourceUtils.SourceConstants.ReplExtension
   }\n`;
 
+
 /** Auxillary data present in Cdp.Debugger.Paused events in recent Chrome versions */
 interface IInstrumentationPauseAuxData {
   scriptId: string;
   url: string;
   sourceMapURL: string;
 }
+
+export class DebugSession {
+  sources: WebAssemblyFile[];
+
+  constructor() {
+    this.sources = [];
+  }
+
+  reset() {
+    for (const item of this.sources) {
+      item.free();
+    }
+
+    this.sources = [];
+  }
+
+  loadedWebAssembly(wasm: WebAssemblyFile) {
+    this.sources.push(wasm);
+  }
+
+  findFileFromLocation(loc: Protocol.Debugger.Location) {
+    return this.sources.filter(x => x.scriptID == loc.scriptId)[0]?.findFileFromLocation(loc);
+  }
+
+  findAddressFromFileLocation(file: string, line: number) {
+    for (const x of this.sources) {
+      const address = x.findAddressFromFileLocation(file, line);
+
+      if (address) {
+        return {
+          scriptId: x.scriptID,
+          line: 0,
+          column: address,
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  getVariablelistFromAddress(address: number) {
+    for (const x of this.sources) {
+      const list = x.dwarf.variable_name_list(address);
+
+      if (list && list.size() > 0) {
+        return list;
+      }
+    }
+
+    return undefined;
+  }
+
+  getGlobalVariablelist(inst: number) {
+    const list = [];
+
+    for (const x of this.sources) {
+      list.push(x.dwarf.global_variable_name_list(inst));
+    }
+
+    return list;
+  }
+
+  getVariableValue(expr: string, address: number, state: WebAssemblyDebugState) {
+    for (const x of this.sources) {
+      const info = x.dwarf.get_variable_info(
+        expr,
+        state.locals,
+        state.globals,
+        state.stacks,
+        address,
+      );
+
+      if (info) {
+        return info;
+      }
+    }
+
+    return undefined;
+  }
+
+
+}
+
 
 export class Thread implements IVariableStoreLocationProvider {
   private static _lastThreadId = 0;
@@ -176,7 +257,7 @@ export class Thread implements IVariableStoreLocationProvider {
   private _pausedForSourceMapScriptId?: string;
   private _executionContexts: Map<number, ExecutionContext> = new Map();
   readonly replVariables: VariableStore;
-  private _sourceContainer: SourceContainer;
+  public sourceContainer: SourceContainer;
   private _pauseOnSourceMapBreakpointId?: Cdp.Debugger.BreakpointId;
   private _selectedContext: ExecutionContext | undefined;
   static _allThreadsByDebuggerId = new Map<Cdp.Runtime.UniqueDebuggerId, Thread>();
@@ -187,6 +268,7 @@ export class Thread implements IVariableStoreLocationProvider {
   private readonly _onPausedEmitter = new EventEmitter<IPausedDetails>();
   private readonly _dap: DeferredContainer<Dap.Api>;
   private disposed = false;
+  private dwarfDebugSession = new DebugSession();
 
   public debuggerReady = getDeferred<void>();
 
@@ -213,7 +295,7 @@ export class Thread implements IVariableStoreLocationProvider {
     private readonly logger: ILogger,
     private readonly evaluator: IEvaluator,
     private readonly completer: ICompletions,
-    private readonly launchConfig: AnyLaunchConfiguration,
+    public readonly launchConfig: AnyLaunchConfiguration,
     private readonly _breakpointManager: BreakpointManager,
     private readonly console: IConsole,
     private readonly exceptionPause: IExceptionPauseService,
@@ -221,7 +303,7 @@ export class Thread implements IVariableStoreLocationProvider {
     private readonly shutdown: IShutdownParticipants,
   ) {
     this._dap = new DeferredContainer(dap);
-    this._sourceContainer = sourceContainer;
+    this.sourceContainer = sourceContainer;
     this._cdp = cdp;
     this.id = Thread._lastThreadId++;
     this.replVariables = new VariableStore(renameProvider, this._cdp, dap, launchConfig, this);
@@ -233,8 +315,12 @@ export class Thread implements IVariableStoreLocationProvider {
     this._excludedCallers = callers;
   }
 
-  cdp(): Cdp.Api {
+  get cdp(): Cdp.Api {
     return this._cdp;
+  }
+
+  get dap(): Dap.Api {
+    return this._dap;
   }
 
   name(): string {
@@ -256,7 +342,7 @@ export class Thread implements IVariableStoreLocationProvider {
   }
 
   public async resume(): Promise<Dap.ContinueResult | Dap.Error> {
-    this._sourceContainer.clearDisabledSourceMaps();
+    this.sourceContainer.clearDisabledSourceMaps();
     if (!(await this._cdp.Debugger.resume({}))) {
       // We don't report the failure if the target wasn't paused. VS relies on this behavior.
       if (this._pausedDetails !== undefined) {
@@ -498,7 +584,7 @@ export class Thread implements IVariableStoreLocationProvider {
     }
 
     if (args.evaluationOptions)
-      this.cdp().DotnetDebugger.setEvaluationOptions({
+      this.cdp.DotnetDebugger.setEvaluationOptions({
         options: args.evaluationOptions,
         type: 'evaluation',
       });
@@ -635,7 +721,7 @@ export class Thread implements IVariableStoreLocationProvider {
       if (event.hints['copyToClipboard']) {
         this._copyObjectToClipboard(event.object);
       } else if (event.hints['queryObjects']) {
-        this.console.enqueue(this, new QueryObjectsMessage(event.object, this.cdp()));
+        this.console.enqueue(this, new QueryObjectsMessage(event.object, this.cdp));
       } else this._revealObject(event.object);
     });
 
@@ -788,7 +874,7 @@ export class Thread implements IVariableStoreLocationProvider {
     const context = this._executionContexts.get(contextId);
     if (!context) return;
     this._executionContexts.delete(contextId);
-    context.remove(this._sourceContainer);
+    context.remove(this.sourceContainer);
   }
 
   _executionContextsCleared() {
@@ -911,9 +997,132 @@ export class Thread implements IVariableStoreLocationProvider {
         return;
       }
     }
-
     // We store pausedDetails in a local variable to avoid race conditions while awaiting this._smartStepper.shouldSmartStep
-    const pausedDetails = (this._pausedDetails = this._createPausedDetails(event));
+    this._pausedDetails = this._createPausedDetails(event);
+    const pausedDetails = this._pausedDetails
+    // let dwarfSessionState: PausedDebugSessionState;
+
+    // const stackFrames = event.callFrames.map((v, i) => {
+    //   const dwarfLocation = this.dwarfDebugSession!.findFileFromLocation(v.location);
+
+    //   const frame: RuntimeStackFrame = {
+    //     frame: v,
+    //     locals: [],
+    //     stack: {
+    //       index: i,
+    //       name: v.functionName,
+    //       instruction: v.location.columnNumber,
+    //       file: dwarfLocation?.file() || v.url,
+    //       line: dwarfLocation?.line || v.location.lineNumber,
+    //     },
+    //   } as RuntimeStackFrame;
+
+    //   return frame
+    // });
+
+    // dwarfSessionState = new PausedDebugSessionState(this._cdp.Debugger, this._cdp.Runtime, this.dwarfDebugSession, stackFrames)
+
+    // const promises = stackFrames.map( async (frame)=>{
+    //   // if (!frame.state) {
+    //   //   if (!frame.statePromise) {
+    //   //       frame.statePromise = dwarfSessionState.dumpVariable(frame.frame);
+    //   //   }
+    //   //   frame.statePromise?.then(state => {
+    //   //     frame.state = state
+    //   //   });
+    //   // }
+
+    //   const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.stack.instruction!)
+    //   frame.frame.locals = frame.locals
+    //   frame.frame.scopeChain.forEach(scope => scope.locals = frame.locals)
+
+    //   if (varlist) {
+
+    //     for (let i = 0; i < varlist.size(); i++)
+    //     {
+    //         const name = varlist.at_name(i);
+    //         const displayName = varlist.at_display_name(i);
+    //         const type = varlist.at_type_name(i);
+    //         const groupId = varlist.at_group_id(i);
+    //         const childGroupId = varlist.at_chile_group_id(i);
+
+    //         let local = {
+    //           name, displayName, type, groupId, childGroupId, value: undefined
+    //         }
+
+    //         local.value = await dwarfSessionState.dumpVariable(displayName)
+
+    //         frame.locals.push(local)
+    //     }
+    //   }
+    // })
+
+    // await Promise.all(promises)
+
+    let dwarfSessionState: PausedDebugSessionState;
+
+    const stackFrames = pausedDetails.stackTrace.frames.map((stackFrame, i) => {
+      if(!stackFrame?.callFrame?.location) return;
+
+      const dwarfLocation = this.dwarfDebugSession!.findFileFromLocation(stackFrame.callFrame.location);
+
+      const frame: RuntimeStackFrame = {
+        stackFrame: stackFrame,
+        frame: stackFrame.callFrame,
+        locals: [],
+        stack: {
+          index: i,
+          name: stackFrame.callFrame.functionName,
+          instruction: stackFrame.callFrame.location.columnNumber,
+          file: dwarfLocation?.file() || stackFrame.callFrame.url,
+          line: dwarfLocation?.line || stackFrame.callFrame.location.lineNumber,
+        },
+      } as RuntimeStackFrame;
+
+      stackFrame.locals = frame.locals
+
+      return frame
+    }).filter(el=>el);
+
+    dwarfSessionState = new PausedDebugSessionState(this._cdp.Debugger, this._cdp.Runtime, this.dwarfDebugSession, stackFrames)
+
+    const promises = stackFrames.map( async (frame)=>{
+      // if (!frame.state) {
+      //   if (!frame.statePromise) {
+      //       frame.statePromise = dwarfSessionState.dumpVariable(frame.frame);
+      //   }
+      //   frame.statePromise?.then(state => {
+      //     frame.state = state
+      //   });
+      // }
+
+      const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.stack.instruction!)
+      // frame.frame.locals = frame.locals
+      // frame.frame.scopeChain.forEach(scope => scope.locals = frame.locals)
+
+      if (varlist) {
+
+        for (let i = 0; i < varlist.size(); i++)
+        {
+            const name = varlist.at_name(i);
+            const displayName = varlist.at_display_name(i);
+            const type = varlist.at_type_name(i);
+            const groupId = varlist.at_group_id(i);
+            const childGroupId = varlist.at_chile_group_id(i);
+
+            let local = {
+              name, displayName, type, groupId, childGroupId, value: undefined
+            }
+
+            local.value = await dwarfSessionState.dumpVariable(displayName)
+
+            frame.locals.push(local)
+        }
+      }
+    })
+
+    await Promise.all(promises)
+
     if (this._excludedCallers.length) {
       if (await this._matchesExcludedCaller(this._pausedDetails.stackTrace)) {
         this.logger.info(LogTag.Runtime, 'Skipping pause due to excluded caller');
@@ -1049,9 +1258,9 @@ export class Thread implements IVariableStoreLocationProvider {
     );
   }
 
-  rawLocation(
+  scriptLocation(
     location: Cdp.Runtime.CallFrame | Cdp.Debugger.CallFrame | Cdp.Debugger.Location,
-  ): RawLocation {
+  ): ScriptLocation {
     // Note: cdp locations are 0-based, while ui locations are 1-based. Also,
     // some we can *apparently* get negative locations; Vue's "hello world"
     // project was observed to emit source locations at (-1, -1) in its callframe.
@@ -1060,13 +1269,13 @@ export class Thread implements IVariableStoreLocationProvider {
       return {
         lineNumber: Math.max(0, loc.location.lineNumber) + 1,
         columnNumber: Math.max(0, loc.location.columnNumber || 0) + 1,
-        scriptId: loc.location.scriptId,
+        script: this.sourceContainer.getScriptById(loc.location.scriptId),
       };
     }
     return {
       lineNumber: Math.max(0, location.lineNumber) + 1,
       columnNumber: Math.max(0, location.columnNumber || 0) + 1,
-      scriptId: location.scriptId,
+      script: this.sourceContainer.getScriptById(location.scriptId),
     };
   }
 
@@ -1074,12 +1283,13 @@ export class Thread implements IVariableStoreLocationProvider {
    * Gets the UI location given the raw location from the runtime. We make
    * an effort to avoid async/await in the happy path here, since this function
    * can get very hot in some scenarios.
+   * // todo: rawlocation
    */
-  public rawLocationToUiLocation(
-    rawLocation: RawLocation,
+  public scriptLocationToUiLocation(
+    scriptLocation: ScriptLocation,
   ): Promise<IPreferredUiLocation | undefined> | IPreferredUiLocation | undefined {
     // disposed check from https://github.com/microsoft/vscode/issues/121136
-    if (!rawLocation.scriptId || this.disposed) {
+    if (!scriptLocation.script || this.disposed) {
       return undefined;
     }
 
@@ -1088,45 +1298,55 @@ export class Thread implements IVariableStoreLocationProvider {
       return undefined;
     }
 
-    const script = this._sourceContainer.getScriptById(rawLocation.scriptId);
+    // const script = this.sourceContainer.getScriptById(scriptLocation.scriptId);
+    const script = scriptLocation.script
+
     if (!script) {
-      return this.rawLocationToUiLocationWithWaiting(rawLocation);
+      return this.waitForScriptId(scriptLocation.script.scriptId).then(async script => {
+        if(!script) return
+
+        await script.sourcePromise;
+        return this.sourceContainer.preferredUiLocation({
+          ...rawToUiOffset(scriptLocation, script.runtimeScriptOffset),
+          source: script.source,
+        });
+      })
     }
 
-    if (script.resolvedSource) {
-      return this._sourceContainer.preferredUiLocation({
-        ...rawToUiOffset(rawLocation, script.resolvedSource.runtimeScriptOffset),
-        source: script.resolvedSource,
-      });
-    } else {
-      return script.source.then(source =>
-        this._sourceContainer.preferredUiLocation({
-          ...rawToUiOffset(rawLocation, source.runtimeScriptOffset),
-          source,
-        }),
-      );
-    }
-  }
+    // if (script.source.outgoingSourceMap) {
+    //   return this.sourceContainer.preferredUiLocation({
+    //     ...rawToUiOffset(scriptLocation, script.runtimeScriptOffset),
+    //     source: script.source,
+    //   });
+    // }
 
-  public async rawLocationToUiLocationWithWaiting(
-    rawLocation: RawLocation,
-  ): Promise<IPreferredUiLocation | undefined> {
-    const script = rawLocation.scriptId
-      ? await this.getScriptByIdOrWait(rawLocation.scriptId)
-      : undefined;
-    if (!script) {
-      return;
+    if(!script.source && script.sourcePromise){
+      return script.sourcePromise.then(
+        source =>  this.sourceContainer.preferredUiLocation({
+          ...rawToUiOffset(scriptLocation, script.runtimeScriptOffset),
+          source: script.source,
+        })
+      )
     }
 
-    const source = await script.source;
-    return this._sourceContainer.preferredUiLocation({
-      ...rawToUiOffset(rawLocation, source.runtimeScriptOffset),
-      source,
-    });
+    // TODO: lookup sourceMaps involved in this script
+
+    return this.sourceContainer.preferredUiLocation({
+      ...rawToUiOffset(scriptLocation, script.runtimeScriptOffset),
+      source: script.source,
+    })
+
+    // return script.sourcesPromise.then(({sources})=>{
+    //   return this.sourceContainer.preferredUiLocation({
+    //     ...rawToUiOffset(scriptLocation, script.runtimeScriptOffset),
+    //     source: script.source,
+    //   })
+    // });
+
   }
 
   public getScriptById(scriptId: string) {
-    const script = this._sourceContainer.getScriptById(scriptId);
+    const script = this.sourceContainer.getScriptById(scriptId);
     return script;
   }
 
@@ -1137,13 +1357,13 @@ export class Thread implements IVariableStoreLocationProvider {
    * possible script IDs; this waits if we see one that we don't.
    */
   private getScriptByIdOrWait(scriptId: string, maxTime = 500) {
-    const script = this._sourceContainer.getScriptById(scriptId);
+    const script = this.sourceContainer.getScriptById(scriptId);
     return script || this.waitForScriptId(scriptId, maxTime);
   }
 
-  private waitForScriptId(scriptId: string, maxTime: number) {
+  private waitForScriptId(scriptId: string, maxTime: number=500) {
     return new Promise<Script | undefined>(resolve => {
-      const listener = this._sourceContainer.onScript(script => {
+      const listener = this.sourceContainer.onScript(script => {
         if (script.scriptId === scriptId) {
           resolve(script);
           listener.dispose();
@@ -1159,10 +1379,10 @@ export class Thread implements IVariableStoreLocationProvider {
   }
 
   async renderDebuggerLocation(loc: Cdp.Debugger.Location): Promise<string> {
-    const raw = this.rawLocation(loc);
-    const ui = await this.rawLocationToUiLocation(raw);
+    const raw = this.scriptLocation(loc);
+    const ui = await this.scriptLocationToUiLocation(raw);
     if (ui) return `@ ${await ui.source.prettyName()}:${ui.lineNumber}`;
-    return `@ VM${raw.scriptId || 'XX'}:${raw.lineNumber}`;
+    return `@ VM${raw.script.scriptId || 'XX'}:${raw.lineNumber}`;
   }
 
   async updateCustomBreakpoint(id: CustomBreakpointId, enabled: boolean): Promise<void> {
@@ -1186,11 +1406,11 @@ export class Thread implements IVariableStoreLocationProvider {
       event.reason === 'ambiguous';
 
     const hitAnyBreakpoint = !!(event.hitBreakpoints && event.hitBreakpoints.length);
-    if (hitAnyBreakpoint || !sameDebuggingSequence) this._sourceContainer.clearDisabledSourceMaps();
+    if (hitAnyBreakpoint || !sameDebuggingSequence) this.sourceContainer.clearDisabledSourceMaps();
 
     if (event.hitBreakpoints && this._sourceMapDisabler) {
-      //   for (const sourceToDisable of this._sourceMapDisabler(event.hitBreakpoints))
-      //     this._sourceContainer.disableSourceMapForSource(sourceToDisable);
+        for (const sourceToDisable of this._sourceMapDisabler(event.hitBreakpoints))
+          this.sourceContainer.disableSourceMapForSource(sourceToDisable);
     }
 
     const stackTrace = StackTrace.fromDebugger(
@@ -1304,12 +1524,12 @@ export class Thread implements IVariableStoreLocationProvider {
           const userEntryBp = this.target.entryBreakpoint;
           if (userEntryBp && event.hitBreakpoints.includes(userEntryBp.cdpId)) {
             isStopOnEntry = true; // But if it matches the entry breakpoint id, then it's probably stop on entry
-            const entryBreakpointSource = this._sourceContainer.source({
+            const entryBreakpointSource = this.sourceContainer.source({
               path: fileUrlToAbsolutePath(userEntryBp.path),
             });
 
             if (entryBreakpointSource !== undefined) {
-              const entryBreakpointLocations = this._sourceContainer.currentSiblingUiLocations({
+              const entryBreakpointLocations = this.sourceContainer.currentSiblingUiLocations({
                 lineNumber: event.callFrames[0].location.lineNumber + 1,
                 columnNumber: (event.callFrames[0].location.columnNumber || 0) + 1,
                 source: entryBreakpointSource,
@@ -1388,23 +1608,10 @@ export class Thread implements IVariableStoreLocationProvider {
   }
 
   private _removeAllScripts(silent = false) {
-    this._sourceContainer.clear(silent);
+    this.sourceContainer.clear(silent);
   }
 
   private _onScriptParsed(event: Cdp.Debugger.ScriptParsedEvent) {
-    if (event.scriptLanguage == 'WebAssembly') {
-      console.error(`Start Loading ${event.url}...`);
-
-      (async () => {
-        const response = await this._cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
-        const buffer = Buffer.from(response?.bytecode || '', 'base64');
-
-        const container = DwarfDebugSymbolContainer.new(new Uint8Array(buffer));
-        const file = new WebAssemblyFile(event.scriptId, container);
-
-        console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
-      })();
-    }
 
     if (event.url.endsWith(sourceUtils.SourceConstants.InternalExtension)) {
       // The customer doesn't care about the internal cdp files, so skip this event
@@ -1416,7 +1623,8 @@ export class Thread implements IVariableStoreLocationProvider {
       event.url = urlUtils.absolutePathToFileUrl(event.url);
     }
 
-    if (this._sourceContainer.getScriptById(event.scriptId)) {
+    if (this.sourceContainer.getScriptById(event.scriptId)) {
+      // todo: execution context ?
       return;
     }
 
@@ -1441,100 +1649,92 @@ export class Thread implements IVariableStoreLocationProvider {
       return;
     }
 
-    const createSource = async () => {
-      const prevSource = this._sourceContainer.getSourceByOriginalUrl(event.url);
-      if (event.hash && prevSource?.contentHash === event.hash) {
-        prevSource.addScript({
-          scriptId: event.scriptId,
-          url: event.url,
-          executionContextId: event.executionContextId,
-        });
-        return prevSource;
+    const script: Script = new Script();
+
+    script.url =  event.url,
+    script.scriptId = event.scriptId,
+    script.container = this.sourceContainer
+    script.executionContextId = event.executionContextId,
+      // source: createSource(),
+
+    script.sourcePromise = this.getSourceFromScriptEvent(event, script).then(source => {
+      if(source){
+        this.sourceContainer._addSource(source)
       }
+      script.source = source
+      return source
+    })
 
-      let resolvedSourceMapUrl: string | undefined;
-      if (event.sourceMapURL) {
-        // Note: we should in theory refetch source maps with relative urls, if the base url has changed,
-        // but in practice that usually means new scripts with new source maps anyway.
-        resolvedSourceMapUrl = urlUtils.isDataUri(event.sourceMapURL)
-          ? event.sourceMapURL
-          : (event.url && urlUtils.completeUrl(event.url, event.sourceMapURL)) || event.url;
-        if (!resolvedSourceMapUrl) {
-          this._dap.with(dap =>
-            errors.reportToConsole(dap, `Could not load source map from ${event.sourceMapURL}`),
-          );
-        }
-      }
 
-      // const absolutePath = await this._sourceContainer.sourcePathResolver.urlToAbsolutePath({ url: event.url });
-      // if(absolutePath){
-      //   const mappedSource = this._sourceContainer.getSourceByAbsolutePath(absolutePath)
-      //   if(mappedSource) {
-      //     if(resolvedSourceMapUrl){
-      //       mappedSource.setSourceMapUrl(resolvedSourceMapUrl)
-      //     }
-      //     mappedSource.addScript({
-      //       scriptId: event.scriptId,
-      //       url: event.url,
-      //       executionContextId: event.executionContextId,
-      //     });
-      //     // return mappedSource
-      //   }
-      // }
-      const contentGetter = async () => {
-        const response = await this._cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
-        return response ? response.scriptSource : undefined;
-      };
+    // script.sourcesPromise = this.getSourceFromScriptEvent(event, script).then(({sources, sourceMap})=>{
+    //   script.sources = sources
+    //   script.sourceMap = sourceMap
+    //   if(!sourceMap) return {sources, sourceMap}
 
-      const inlineSourceOffset =
-        event.startLine || event.startColumn
-          ? { lineOffset: event.startLine, columnOffset: event.startColumn }
-          : undefined;
+    //   sourceMap.compiled.add(script);
+    //   this.sourceContainer._sourceMaps.set(event.sourceMapURL, sourceMap);
 
-      // see https://github.com/microsoft/vscode/issues/103027
-      const runtimeScriptOffset = event.url.endsWith('#vscode-extension')
-        ? { lineOffset: 2, columnOffset: 0 }
-        : undefined;
+    //   for(const source of sources){
+    //     source.addScript(script);
+    //     source.outgoingSourceMaps.push(sourceMap)
+    //   }
 
-      const source = await this._sourceContainer.addSource(
-        event.url,
-        contentGetter,
-        resolvedSourceMapUrl,
-        inlineSourceOffset,
-        runtimeScriptOffset,
-        // only include the script hash if content validation is enabled, and if
-        // the source does not have a redirected URL. In the latter case the
-        // original file won't have a `# sourceURL=...` comment, so the hash
-        // never matches: https://github.com/microsoft/vscode-js-debug/issues/1476
-        !event.hasSourceURL && this.launchConfig.enableContentValidation ? event.hash : undefined,
-      );
+    //   // for(const map of sourceMaps){
+    //   //   this.sourceContainer.addSourceMap(sourceUrl, sourceMap);
+    //   // }
 
-      source.addScript({
-        scriptId: event.scriptId,
-        url: event.url,
-        executionContextId: event.executionContextId,
-      });
+    //   for(const source of sources){
+    //     this.sourceContainer._addSource(source);
+    //   }
 
-      return source;
-    };
+    //   return {sources, sourceMap}
+    // })
 
-    const script: Script = {
-      url: event.url,
-      scriptId: event.scriptId,
-      executionContextId: event.executionContextId,
-      source: createSource(),
-    };
-    script.source.then(s => (script.resolvedSource = s));
     executionContext.scripts.push(script);
 
-    this._sourceContainer.addScriptById(script);
+    this.sourceContainer.addScript(script);
+  }
+
+  async getSourceFromScriptEvent(event: Cdp.Debugger.ScriptParsedEvent, script: Script): Promise<SourceFromScript | undefined>{
+    let sourceMap
+
+    if (event.scriptLanguage == 'WebAssembly') {
+      console.error(`Start Loading ${event.url}...`);
+
+      const response = await this._cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
+      const buffer = Buffer.from(response?.bytecode || '', 'base64');
+
+      const container = DwarfDebugSymbolContainer.new(new Uint8Array(buffer));
+      const file = new WebAssemblyFile(event.scriptId, container);
+
+      this.dwarfDebugSession.loadedWebAssembly(file);
+
+      console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
+
+    }
 
     if (event.sourceMapURL) {
       // If we won't pause before executing this script, still try to load source
       // map and set breakpoints as soon as possible. We pause on the first line
       // (the "module entry breakpoint") to ensure this resolves.
-      this._getOrStartLoadingSourceMaps(script);
+
+      sourceMap = await this._getOrLoadSourceMaps(event, script)
     }
+
+    // assuming plain js without sourcemap -> create Source from scripts contents
+    let source = this.sourceContainer.getSourceByOriginalUrl(event.url) as SourceFromScript | undefined;
+    if (!source || !(source instanceof SourceFromScript) || !event.hash || source?.contentHash !== event.hash) {
+      source = await SourceFromScript.createFromScript(event, this, script)
+    }
+
+    source.outgoingSourceMap = sourceMap
+    if(sourceMap){
+      sourceMap.source = source
+    }
+
+    source.scriptByExecutionContext.set(this._executionContexts.get(event.executionContextId), script)
+
+    return source
   }
 
   /**
@@ -1546,25 +1746,31 @@ export class Thread implements IVariableStoreLocationProvider {
     brokenOn?: Cdp.Debugger.Location,
   ): Promise<boolean> {
     this._pausedForSourceMapScriptId = scriptId;
-    const perScriptTimeout = this._sourceContainer.sourceMapTimeouts().sourceMapMinPause;
+    const perScriptTimeout = this.sourceContainer.sourceMapTimeouts().sourceMapMinPause;
     const timeout =
-      perScriptTimeout + this._sourceContainer.sourceMapTimeouts().sourceMapCumulativePause;
+      perScriptTimeout + this.sourceContainer.sourceMapTimeouts().sourceMapCumulativePause;
 
-    const script = this._sourceContainer.getScriptById(scriptId);
+    const script = this.sourceContainer.getScriptById(scriptId);
     if (!script) {
       this._pausedForSourceMapScriptId = undefined;
       return false;
     }
 
+    if (!script.source && !await Promise.race([script.sourcePromise, delay(timeout)])) {
+      this._pausedForSourceMapScriptId = undefined;
+      return false;
+    }
+
     const timer = new HrTime();
-    const result = await Promise.race([this._getOrStartLoadingSourceMaps(script), delay(timeout)]);
+    await Promise.race([script.source.outgoingSourceMap?.finishLoading, delay(timeout)]);
+    const sourceMap = script.source.outgoingSourceMap
 
     const timeSpentWallClockInMs = timer.elapsed().ms;
     const sourceMapCumulativePause =
-      this._sourceContainer.sourceMapTimeouts().sourceMapCumulativePause -
+      this.sourceContainer.sourceMapTimeouts().sourceMapCumulativePause -
       Math.max(timeSpentWallClockInMs - perScriptTimeout, 0);
-    this._sourceContainer.setSourceMapTimeouts({
-      ...this._sourceContainer.sourceMapTimeouts(),
+    this.sourceContainer.setSourceMapTimeouts({
+      ...this.sourceContainer.sourceMapTimeouts(),
       sourceMapCumulativePause,
     });
     this.logger.verbose(LogTag.Internal, `Blocked execution waiting for source-map`, {
@@ -1572,7 +1778,7 @@ export class Thread implements IVariableStoreLocationProvider {
       sourceMapCumulativePause,
     });
 
-    if (!result) {
+    if (!sourceMap) {
       this._dap.with(dap =>
         dap.output({
           category: 'stderr',
@@ -1591,9 +1797,25 @@ export class Thread implements IVariableStoreLocationProvider {
     const bLine = brokenOn?.lineNumber || 0;
     const bColumn = brokenOn?.columnNumber;
 
-    return !!result
-      ?.map(base1To0)
-      .some(b => b.lineNumber === bLine && (bColumn === undefined || bColumn === b.columnNumber));
+    const ctx = this._executionContexts.get(script.executionContextId);
+    if (!ctx) {
+      return false;
+    }
+
+    let loads = await ctx.sourceMapLoads.get(scriptId)
+
+    if(!loads) {
+      return false
+    }
+
+
+    return loads
+      .map(base1To0)
+      .some(b => b.lineNumber === bLine && (bColumn === undefined || bColumn === b.columnNumber))
+
+    // return !![...(sourceMap?.sourceByUrl.values() ?? [])]
+
+
   }
 
   /**
@@ -1601,27 +1823,145 @@ export class Thread implements IVariableStoreLocationProvider {
    * haven't already done so. Returns a promise that resolves with the
    * handler's results.
    */
-  private _getOrStartLoadingSourceMaps(script: Script) {
+  private async _getOrLoadSourceMaps(event: Cdp.Debugger.ScriptParsedEvent, script: Script): Promise<SourceMap | undefined> {
     const ctx = this._executionContexts.get(script.executionContextId);
     if (!ctx) {
-      return Promise.resolve([]);
+      return;
     }
 
-    const existing = ctx.sourceMapLoads.get(script.scriptId);
-    if (existing) {
-      return existing;
+    // const existing = ctx.sourceMapLoads.get(event.scriptId);
+    // if (existing) {
+    //   return existing;
+    // }
+
+    const sourceMapUrl = event.sourceMapURL;
+
+    if(!sourceMapUrl){
+      return
     }
 
-    const result = script.source
-      .then(source => this._sourceContainer.waitForSourceMapSources(source))
-      .then(sources =>
-        sources.length && this._scriptWithSourceMapHandler
-          ? this._scriptWithSourceMapHandler(script, sources)
-          : [],
-      );
+    const deferred = getDeferred<void>();
 
-    ctx.sourceMapLoads.set(script.scriptId, result);
-    return result;
+    const existingSourceMap = this.sourceContainer.getSourceMapByUrl(sourceMapUrl);
+    // if (existingSourceMap) {
+    //   if(!existingSourceMap.deferred.hasSettled()){
+    //     await existingSourceMap.loaded
+
+    //   }
+    //   existingSourceMap.deferred = deferred
+    //   existingSourceMap.loaded = deferred.promise
+    //     // If source map has been already loaded, we add sources here.
+    //     // Otheriwse, we'll add sources for all compiled after loading the map.
+    //   const sources = await this.sourceContainer._addSourceMapSources(script, existingSourceMap);
+    //   deferred.resolve()
+    //   return {
+    //     sourceMap: existingSourceMap,
+    //     sources
+    //   }
+    // }
+
+    // const sourceMapData: SourceMapData = { compiled: new Set([script]), loaded: deferred.promise };
+
+    // this.sourceMap = {
+    //   url: sourceMapUrl,
+    //   sourceByUrl: new Map(),
+    //   metadata: ,
+    // };
+
+    const sourceMapMetadata: ISourceMapMetadata = {
+      sourceMapUrl,
+      compiledPath: script.url,
+      loaded: deferred
+    }
+    let sourceMap
+
+    let sourceMapLoadsDeferred = getDeferred<IUiLocation[]>()
+    ctx.sourceMapLoads.set(event.scriptId, sourceMapLoadsDeferred.promise);
+
+    try {
+      sourceMap = await this.sourceContainer.sourceMapFactory.load(sourceMapMetadata);
+    } catch (urlError) {
+      if (this.sourceContainer.initializeConfig.clientID === 'visualstudio') {
+        // On VS we want to support loading source-maps from storage if the web-server doesn't serve them
+        const originalSourceMapUrl = script.sourceMap.metadata.sourceMapUrl;
+        try {
+          const sourceMapAbsolutePath = await this.sourcePathResolver.urlToAbsolutePath({
+            url: originalSourceMapUrl,
+          });
+
+          if (sourceMapAbsolutePath) {
+            source.outgoingSourceMap.metadata.sourceMapUrl =
+              utils.absolutePathToFileUrl(sourceMapAbsolutePath);
+          }
+
+          sourceMap = await this.sourceMapFactory.load(sourceMapMetadata);
+          this._statistics.fallbackSourceMapCount++;
+
+          this.logger.info(
+            LogTag.SourceMapParsing,
+            `Failed to process original source-map; falling back to storage source-map`,
+            {
+              fallbackSourceMapUrl: source.outgoingSourceMap.metadata.sourceMapUrl,
+              originalSourceMapUrl,
+              originalSourceMapError: extractErrorDetails(urlError),
+            },
+          );
+        } catch {}
+      }
+
+      if (!sourceMap) {
+        this.logger.error(urlError)
+        this._dap.with(dap => dap.output({
+          output: sourceMapParseFailed(script.url, urlError.message).error.format + '\n',
+          category: 'stderr',
+        }));
+        deferred.resolve()
+        sourceMapLoadsDeferred.resolve([])
+        return
+
+        // return deferred.resolve();
+      }
+    }
+
+    // // Source map could have been detached while loading.
+    // if (this.sourceContainer._sourceMaps.get(sourceMapUrl) !== sourceMapData) {
+    //   return deferred.resolve();
+    // }
+
+    this.logger.verbose(LogTag.SourceMapParsing, 'Creating sources from source map', {
+      sourceMapId: sourceMap.id,
+      metadata: sourceMap.metadata,
+    });
+
+
+    const sources = await this.sourceContainer._addSourceMapSources(script, sourceMap);
+    this.sourceContainer._sourcesBySourceMapUrl.set(sourceMapUrl, sources)
+
+    deferred.resolve();
+
+
+
+    // const sourceMap = this._sourceMaps.get(sourceUrl);
+    if (
+      !this.logger.assert(sourceMap, 'Unrecognized source map url in waitForSourceMapSources()')
+    ) {
+      return;
+    }
+
+    // await sourceMap.loaded;
+
+    if(sources.length && this._scriptWithSourceMapHandler){
+      sourceMapLoadsDeferred.resolve(this._scriptWithSourceMapHandler(script, sources))
+    } else {
+      sourceMapLoadsDeferred.resolve([])
+    }
+
+    // re-initialize after loading source mapped sources
+    // this.sourceContainer.scriptSkipper.initializeSkippingValueForSource(script.source);
+
+    return sourceMap
+
+    // return
   }
 
   async _revealObject(object: Cdp.Runtime.RemoteObject) {
@@ -1638,10 +1978,10 @@ export class Thread implements IVariableStoreLocationProvider {
         (p.value.subtype as string) !== 'internal#location'
       )
         continue;
-      const uiLocation = await this.rawLocationToUiLocation(
-        this.rawLocation(p.value.value as Cdp.Debugger.Location),
+      const uiLocation = await this.scriptLocationToUiLocation(
+        this.scriptLocation(p.value.value as Cdp.Debugger.Location),
       );
-      if (uiLocation) this._sourceContainer.revealUiLocation(uiLocation);
+      if (uiLocation) this.sourceContainer.revealUiLocation(uiLocation);
       break;
     }
   }
@@ -1656,7 +1996,7 @@ export class Thread implements IVariableStoreLocationProvider {
 
     try {
       const result = await serializeForClipboard({
-        cdp: this.cdp(),
+        cdp: this.cdp,
         objectId: object.objectId,
         args: [2],
         silent: true,
@@ -1667,7 +2007,7 @@ export class Thread implements IVariableStoreLocationProvider {
     } catch (e) {
       // ignored
     } finally {
-      this.cdp()
+      this.cdp
         .Runtime.releaseObject({ objectId: object.objectId })
         .catch(() => undefined);
     }
@@ -1760,7 +2100,7 @@ export class Thread implements IVariableStoreLocationProvider {
     this._scriptWithSourceMapHandler = handler;
 
     const needsPause =
-      pause && this._sourceContainer.sourceMapTimeouts().sourceMapMinPause && handler;
+      pause && this.sourceContainer.sourceMapTimeouts().sourceMapMinPause && handler;
     if (needsPause && !this._pauseOnSourceMapBreakpointId) {
       const result = await this._cdp.Debugger.setInstrumentationBreakpoint({
         instrumentation: 'beforeScriptWithSourceMapExecution',
@@ -1825,15 +2165,15 @@ export class Thread implements IVariableStoreLocationProvider {
       }
 
       const compiledSource =
-        this._sourceContainer.getSourceByOriginalUrl(urlUtils.absolutePathToFileUrl(chunk.path)) ||
-        this._sourceContainer.getSourceByOriginalUrl(chunk.path);
+        this.sourceContainer.getSourceByOriginalUrl(urlUtils.absolutePathToFileUrl(chunk.path)) ||
+        this.sourceContainer.getSourceByOriginalUrl(chunk.path);
       if (!compiledSource) {
         todo.push(chunk.toString());
         continue;
       }
 
       todo.push(
-        this._sourceContainer
+        this.sourceContainer
           .preferredUiLocation({
             columnNumber: chunk.position.base1.columnNumber,
             lineNumber: chunk.position.base1.lineNumber,
