@@ -41,8 +41,7 @@ import { PreviewContextType, getContextForType } from './objectPreview/contexts'
 import { SmartStepper } from './smartStepping';
 
 import {
-  RuntimeStackFrame,
-  WebAssemblyDebugState,
+  WebAssemblyDebugState
 } from '../dwarf/core/DebugCommand';
 
 import {
@@ -1002,93 +1001,17 @@ export class Thread implements IVariableStoreLocationProvider {
     // We store pausedDetails in a local variable to avoid race conditions while awaiting this._smartStepper.shouldSmartStep
     this._pausedDetails = this._createPausedDetails(event);
     const pausedDetails = this._pausedDetails
-    // let dwarfSessionState: PausedDebugSessionState;
 
-    // const stackFrames = event.callFrames.map((v, i) => {
-    //   const dwarfLocation = this.dwarfDebugSession!.findFileFromLocation(v.location);
+    let dwarfSessionState = new PausedDebugSessionState(this._cdp.Debugger, this._cdp.Runtime, this.dwarfDebugSession)
 
-    //   const frame: RuntimeStackFrame = {
-    //     frame: v,
-    //     locals: [],
-    //     stack: {
-    //       index: i,
-    //       name: v.functionName,
-    //       instruction: v.location.columnNumber,
-    //       file: dwarfLocation?.file() || v.url,
-    //       line: dwarfLocation?.line || v.location.lineNumber,
-    //     },
-    //   } as RuntimeStackFrame;
-
-    //   return frame
-    // });
-
-    // dwarfSessionState = new PausedDebugSessionState(this._cdp.Debugger, this._cdp.Runtime, this.dwarfDebugSession, stackFrames)
-
-    // const promises = stackFrames.map( async (frame)=>{
-    //   // if (!frame.state) {
-    //   //   if (!frame.statePromise) {
-    //   //       frame.statePromise = dwarfSessionState.dumpVariable(frame.frame);
-    //   //   }
-    //   //   frame.statePromise?.then(state => {
-    //   //     frame.state = state
-    //   //   });
-    //   // }
-
-    //   const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.stack.instruction!)
-    //   frame.frame.locals = frame.locals
-    //   frame.frame.scopeChain.forEach(scope => scope.locals = frame.locals)
-
-    //   if (varlist) {
-
-    //     for (let i = 0; i < varlist.size(); i++)
-    //     {
-    //         const name = varlist.at_name(i);
-    //         const displayName = varlist.at_display_name(i);
-    //         const type = varlist.at_type_name(i);
-    //         const groupId = varlist.at_group_id(i);
-    //         const childGroupId = varlist.at_chile_group_id(i);
-
-    //         let local = {
-    //           name, displayName, type, groupId, childGroupId, value: undefined
-    //         }
-
-    //         local.value = await dwarfSessionState.dumpVariable(displayName)
-
-    //         frame.locals.push(local)
-    //     }
-    //   }
-    // })
-
-    // await Promise.all(promises)
-
-    let dwarfSessionState: PausedDebugSessionState;
-
-    const stackFrames = pausedDetails.stackTrace.frames.map((stackFrame, i) => {
-      if(!stackFrame?.callFrame?.location) return;
-
-      const dwarfLocation = this.dwarfDebugSession!.findFileFromLocation(stackFrame.callFrame.location);
-
-      const frame: RuntimeStackFrame = {
-        stackFrame: stackFrame,
-        frame: stackFrame.callFrame,
-        locals: [],
-        stack: {
-          index: i,
-          name: stackFrame.callFrame.functionName,
-          instruction: stackFrame.callFrame.location.columnNumber,
-          file: dwarfLocation?.file() || stackFrame.callFrame.url,
-          line: dwarfLocation?.line || stackFrame.callFrame.location.lineNumber,
-        },
-      } as RuntimeStackFrame;
-
-      stackFrame.locals = frame.locals
-
-      return frame
-    }).filter(el=>el);
-
-    dwarfSessionState = new PausedDebugSessionState(this._cdp.Debugger, this._cdp.Runtime, this.dwarfDebugSession, stackFrames)
-
-    const promises = stackFrames.map( async (frame)=>{
+    const promises = pausedDetails.stackTrace.frames.map( async (frame)=>{
+      if(!(frame instanceof StackFrame)){
+        return
+      }
+      // TODO: investiage why some frames have a location and some dont
+      if(!frame.callFrame.location){
+        return
+      }
       // if (!frame.state) {
       //   if (!frame.statePromise) {
       //       frame.statePromise = dwarfSessionState.dumpVariable(frame.frame);
@@ -1098,14 +1021,13 @@ export class Thread implements IVariableStoreLocationProvider {
       //   });
       // }
 
-      const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.stack.instruction!)
+      const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.callFrame.location.columnNumber!)
       // frame.frame.locals = frame.locals
       // frame.frame.scopeChain.forEach(scope => scope.locals = frame.locals)
 
-      frame.stackFrame._name = await demangle(frame.stackFrame._name)
-      frame.stack.name = frame.stackFrame._name //await demangle(frame.stack.name)
-      frame.frame.functionName = frame.stackFrame._name //await demangle(frame.frame.functionName)
-
+      frame._name = await demangle(frame._name)
+      // frame.callFrame.functionName = await demangle(frame.callFrame.functionName) //await demangle(frame.frame.functionName)
+      frame.locals = []
 
       if (varlist) {
         for (let i = 0; i < varlist.size(); i++)
@@ -1120,14 +1042,14 @@ export class Thread implements IVariableStoreLocationProvider {
               name, displayName, type, groupId, childGroupId, value: undefined
             }
 
-            local.value = await dwarfSessionState.dumpVariable(displayName, frame)
+            local.value = await dwarfSessionState.dumpVariable(frame, displayName)
 
             frame.locals.push(local)
         }
       }
     })
 
-    await Promise.all(promises)
+    await Promise.all(promises.filter(el=>el))
 
     if (this._excludedCallers.length) {
       if (await this._matchesExcludedCaller(this._pausedDetails.stackTrace)) {
@@ -1670,23 +1592,7 @@ export class Thread implements IVariableStoreLocationProvider {
     source.scriptByExecutionContext.set(this._executionContexts.get(event.executionContextId), script)
 
     let sourceMap: SourceMap | undefined
-    if (event.scriptLanguage == 'WebAssembly') {
-      console.error(`Start Loading ${event.url}...`);
-
-      const response = await this._cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
-      const buffer = Buffer.from(response?.bytecode || '', 'base64');
-
-      const container = DwarfDebugSymbolContainer.new(new Uint8Array(buffer));
-      const file = new WebAssemblyFile(event.scriptId, container);
-
-      this.dwarfDebugSession.loadedWebAssembly(file);
-
-      console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
-      sourceMap = new DwarfSourceMap(file, source)
-      await this.sourceContainer._addSourceMapSources(script, sourceMap)
-    }
-
-    if (event.sourceMapURL) {
+    if (event.scriptLanguage == 'WebAssembly' || event.sourceMapURL){
       // If we won't pause before executing this script, still try to load source
       // map and set breakpoints as soon as possible. We pause on the first line
       // (the "module entry breakpoint") to ensure this resolves.
@@ -1748,7 +1654,7 @@ export class Thread implements IVariableStoreLocationProvider {
         // return sourcePromise;
       }
 
-      sourceMap = await this._getOrLoadSourceMaps(script, event.sourceMapURL)
+      sourceMap = await this._getOrLoadSourceMap(script, event)
 
     }
 
@@ -1844,7 +1750,11 @@ export class Thread implements IVariableStoreLocationProvider {
    * haven't already done so. Returns a promise that resolves with the
    * handler's results.
    */
-  private async _getOrLoadSourceMaps(script: Script, sourceMapURL: string): Promise<SourceMap | undefined> {
+  private async _getOrLoadSourceMap(script: Script, event: Cdp.Debugger.ScriptParsedEvent): Promise<SourceMap | undefined> {
+    let sourceMap
+
+    console.error(`Start Loading ${event.url}...`);
+
     const ctx = this._executionContexts.get(script.executionContextId);
     if (!ctx) {
       return;
@@ -1857,7 +1767,6 @@ export class Thread implements IVariableStoreLocationProvider {
 
     const deferred = getDeferred<void>();
 
-    const existingSourceMap = this.sourceContainer.getSourceMapByUrl(sourceMapURL);
     // if (existingSourceMap) {
     //   if(!existingSourceMap.deferred.hasSettled()){
     //     await existingSourceMap.loaded
@@ -1875,61 +1784,78 @@ export class Thread implements IVariableStoreLocationProvider {
     //   }
     // }
 
-    const sourceMapMetadata: ISourceMapMetadata = {
-      sourceMapUrl: sourceMapURL,
-      compiledPath: script.url,
-      loaded: deferred
-    }
-    let sourceMap
-
     let sourceMapLoadsDeferred = getDeferred<IUiLocation[]>()
     ctx.sourceMapLoads.set(script.scriptId, sourceMapLoadsDeferred.promise);
 
-    try {
-      sourceMap = await this.sourceContainer.sourceMapFactory.load(sourceMapMetadata);
-    } catch (urlError) {
-      if (this.sourceContainer.initializeConfig.clientID === 'visualstudio') {
-        // On VS we want to support loading source-maps from storage if the web-server doesn't serve them
-        const originalSourceMapUrl = script.sourceMap.metadata.sourceMapUrl;
-        try {
-          const sourceMapAbsolutePath = await this.sourcePathResolver.urlToAbsolutePath({
-            url: originalSourceMapUrl,
-          });
 
-          if (sourceMapAbsolutePath) {
-            source.outgoingSourceMap.metadata.sourceMapUrl =
-              utils.absolutePathToFileUrl(sourceMapAbsolutePath);
-          }
+    if (event.scriptLanguage == 'WebAssembly'){
+      const response = await this._cdp.Debugger.getScriptSource({ scriptId: event.scriptId });
+      const buffer = Buffer.from(response?.bytecode || '', 'base64');
 
-          sourceMap = await this.sourceMapFactory.load(sourceMapMetadata);
-          this._statistics.fallbackSourceMapCount++;
+      const container = DwarfDebugSymbolContainer.new(new Uint8Array(buffer));
+      const file = new WebAssemblyFile(event.scriptId, container);
 
-          this.logger.info(
-            LogTag.SourceMapParsing,
-            `Failed to process original source-map; falling back to storage source-map`,
-            {
-              fallbackSourceMapUrl: source.outgoingSourceMap.metadata.sourceMapUrl,
-              originalSourceMapUrl,
-              originalSourceMapError: extractErrorDetails(urlError),
-            },
-          );
-        } catch {}
-      }
+      this.dwarfDebugSession.loadedWebAssembly(file);
 
-      if (!sourceMap) {
-        this.logger.error(urlError)
-        this._dap.with(dap => dap.output({
-          output: sourceMapParseFailed(script.url, urlError.message).error.format + '\n',
-          category: 'stderr',
-        }));
-        deferred.resolve()
-        sourceMapLoadsDeferred.resolve([])
-        return
-
-        // return deferred.resolve();
-      }
+      console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
+      // TODO: assert script.source
+      sourceMap = new DwarfSourceMap(file, script.source!)
     }
 
+    if( event.sourceMapURL){
+      const existingSourceMap = this.sourceContainer.getSourceMapByUrl(event.sourceMapURL);
+
+
+      try {
+        const sourceMapMetadata: ISourceMapMetadata = {
+          sourceMapUrl: event.sourceMapURL,
+          compiledPath: script.url,
+          loaded: deferred
+        }
+        sourceMap = await this.sourceContainer.sourceMapFactory.load(sourceMapMetadata);
+      } catch (urlError) {
+        if (this.sourceContainer.initializeConfig.clientID === 'visualstudio') {
+          // On VS we want to support loading source-maps from storage if the web-server doesn't serve them
+          const originalSourceMapUrl = script.sourceMap.metadata.sourceMapUrl;
+          try {
+            const sourceMapAbsolutePath = await this.sourcePathResolver.urlToAbsolutePath({
+              url: originalSourceMapUrl,
+            });
+
+            if (sourceMapAbsolutePath) {
+              source.outgoingSourceMap.metadata.sourceMapUrl =
+                utils.absolutePathToFileUrl(sourceMapAbsolutePath);
+            }
+
+            sourceMap = await this.sourceMapFactory.load(sourceMapMetadata);
+            this._statistics.fallbackSourceMapCount++;
+
+            this.logger.info(
+              LogTag.SourceMapParsing,
+              `Failed to process original source-map; falling back to storage source-map`,
+              {
+                fallbackSourceMapUrl: source.outgoingSourceMap.metadata.sourceMapUrl,
+                originalSourceMapUrl,
+                originalSourceMapError: extractErrorDetails(urlError),
+              },
+            );
+          } catch {}
+        }
+
+        if (!sourceMap) {
+          this.logger.error(urlError)
+          this._dap.with(dap => dap.output({
+            output: sourceMapParseFailed(script.url, urlError.message).error.format + '\n',
+            category: 'stderr',
+          }));
+          deferred.resolve()
+          sourceMapLoadsDeferred.resolve([])
+          return
+
+          // return deferred.resolve();
+        }
+      }
+    }
     // // Source map could have been detached while loading.
     // if (this.sourceContainer._sourceMaps.get(sourceMapUrl) !== sourceMapData) {
     //   return deferred.resolve();
@@ -1942,7 +1868,10 @@ export class Thread implements IVariableStoreLocationProvider {
 
 
     const sources = await this.sourceContainer._addSourceMapSources(script, sourceMap);
-    this.sourceContainer._sourcesBySourceMapUrl.set(sourceMapURL, sources)
+    if(event.sourceMapURL){
+      this.sourceContainer._sourcesBySourceMapUrl.set(event.sourceMapURL, sources)
+    }
+
 
     deferred.resolve();
 

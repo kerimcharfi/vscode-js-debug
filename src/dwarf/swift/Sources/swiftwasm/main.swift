@@ -57,33 +57,5 @@ func _demangle(_ mangledName: String) -> String {
 @_cdecl("demangle")
 func demangle(ptr: UnsafePointer<CChar>) {
   let str = String(cString: ptr)
-  // print(str)
   print(_demangle(str))
-  // print("_demangle(String(cString: ptr)")
-  // debugger()
-  // print("demangled")
 }
-
-// print("helooo")
-// import imports
-
-// @_cdecl("foit")
-// func foit(ptr: UnsafePointer<CChar>, size: Int){
-//     let myint = 47; // var30
-//     let anotherint = myint + size
-//     print(myint)
-//     let stepfile_text = String(cString: ptr)
-//     print("running foit ")
-//     print(demangle("$s9swiftwasm4foit3ptr4sizeySPys4Int8VG_SitF"))
-//     print(demangle("$s9swiftwasm5afuncSSyF"))
-
-//     afunc()
-// }
-
-// func afunc() -> String{
-//     print("hello swifty ")
-//     let mystr = "jeeloo"
-//     print(mystr)
-//     debugger()
-//     return mystr
-// }

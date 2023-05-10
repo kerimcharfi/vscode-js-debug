@@ -3,12 +3,11 @@
  *--------------------------------------------------------*/
 import type Protocol from 'devtools-protocol/types/protocol';
 import type ProtocolApi from 'devtools-protocol/types/protocol-proxy-api';
-import { existsSync, readFileSync } from 'fs';
+import { StackFrame } from '../../../adapter/stackTrace';
 import {
   DebuggerDumpCommand,
   DebuggerWorkflowCommand,
-  RuntimeStackFrame,
-  Variable,
+  Variable
 } from '../DebugCommand';
 import { DebugSession } from '../DebugSession';
 import { createWasmValueStore } from '../InterOp';
@@ -63,10 +62,8 @@ class MemoryEvaluator {
 }
 
 export class PausedDebugSessionState implements DebuggerWorkflowCommand, DebuggerDumpCommand {
-  private debugger: ProtocolApi.DebuggerApi;
   private runtime: ProtocolApi.RuntimeApi;
   private debugSession: DebugSession;
-  private stackFrames: RuntimeStackFrame[];
   private memoryEvaluator: MemoryEvaluator;
 
   private selectedFrameIndex = 0;
@@ -75,58 +72,30 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
     _debugger: ProtocolApi.DebuggerApi,
     _runtime: ProtocolApi.RuntimeApi,
     _debugSession: DebugSession,
-    _stackFrames: RuntimeStackFrame[],
   ) {
-    this.debugger = _debugger;
     this.runtime = _runtime;
     this.debugSession = _debugSession;
-    this.stackFrames = _stackFrames;
     this.memoryEvaluator = new MemoryEvaluator(_debugger);
   }
 
-  async stepOver() {
-    await this.debugger.stepOver({});
-  }
+  // async showLine() {
+  //   const frame = this.stackFrames[this.selectedFrameIndex];
 
-  async stepIn() {
-    await this.debugger.stepInto({});
-  }
+  //   if (existsSync(frame.stack.file)) {
+  //     const lines = readFileSync(frame.stack.file, { encoding: 'utf8' })
+  //       .replace(/\t/g, '    ')
+  //       .split('\n');
+  //     const startLine = Math.max(0, frame.stack.line - 10);
+  //     const endLine = Math.min(lines.length - 1, frame.stack.line + 10);
 
-  async stepOut() {
-    await this.debugger.stepOut();
-  }
+  //     for (let i = startLine; i <= endLine; i++) {
+  //       console.error((i + 1 == frame.stack.line ? '->' : '  ') + ` ${i + 1}  ${lines[i]}`);
+  //     }
+  //   }
+  // }
 
-  async continue() {
-    await this.debugger.resume({});
-  }
-
-  async getStackFrames() {
-    return this.stackFrames.map(x => x.stack);
-  }
-
-  async setFocusedFrame(index: number) {
-    this.selectedFrameIndex = index;
-  }
-
-  async showLine() {
-    const frame = this.stackFrames[this.selectedFrameIndex];
-
-    if (existsSync(frame.stack.file)) {
-      const lines = readFileSync(frame.stack.file, { encoding: 'utf8' })
-        .replace(/\t/g, '    ')
-        .split('\n');
-      const startLine = Math.max(0, frame.stack.line - 10);
-      const endLine = Math.min(lines.length - 1, frame.stack.line + 10);
-
-      for (let i = startLine; i <= endLine; i++) {
-        console.error((i + 1 == frame.stack.line ? '->' : '  ') + ` ${i + 1}  ${lines[i]}`);
-      }
-    }
-  }
-
-  async listVariable(variableReference?: number) {
-    const frame = this.stackFrames[this.selectedFrameIndex];
-    const varlist = this.debugSession.getVariablelistFromAddress(frame.stack.instruction!);
+  async listVariable(stackFrame: StackFrame, variableReference?: number) {
+    const varlist = this.debugSession.getVariablelistFromAddress(stackFrame.callFrame.location.columnNumber!);
 
     if (!varlist) {
       return [];
@@ -204,21 +173,21 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
     return list;
   }
 
-  async dumpVariable(expr: string, frame) {
+  async dumpVariable(stackFrame: StackFrame, expr: string) {
     // const frame = this.stackFrames[this.selectedFrameIndex];
 
-    if (!frame.state) {
-      if (!frame.statePromise) {
-        frame.statePromise = this.createWasmValueStore(frame.frame);
+    if (!stackFrame.state) {
+      if (!stackFrame.statePromise) {
+        stackFrame.statePromise = this.createWasmValueStore(stackFrame.callFrame);
       }
 
-      frame.state = await frame.statePromise;
+      stackFrame.state = await stackFrame.statePromise;
     }
 
     const wasmVariable = this.debugSession.getVariableValue(
       expr,
-      frame.stack.instruction!,
-      frame.state,
+      stackFrame.callFrame.location.columnNumber!,
+      stackFrame.state,
     );
 
     // return wasmVariable
@@ -234,7 +203,7 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
     while (wasmVariable.is_required_memory_slice() && limit < 20) {
       const slice = wasmVariable.required_memory_slice();
       const result = await this.memoryEvaluator.evaluate(
-        frame.frame.callFrameId,
+        stackFrame.callFrame.callFrameId,
         slice.address,
         slice.byte_size,
       );

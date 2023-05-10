@@ -766,7 +766,7 @@ export class DwarfSourceMap implements ISourceMap{
       return {
         source: mapped.file(),
         line: mapped.line ?? null,
-        column: mapped.column ?? null,
+        column: mapped.column ? mapped.column - 1 :  null,
         name: mapped.file(),
       }
       // mapped.source = this.sourceOriginalToActual.get(mapped.source) ?? mapped.source;
@@ -792,8 +792,8 @@ export class DwarfSourceMap implements ISourceMap{
       // source: this.sourceActualToOriginal.get(originalPosition.source) ?? originalPosition.source,
     );
     return {
-      line: address ?? null,
-      column: 0,
+      line: 0,
+      column: address ?? null,
       lastColumn: null
     }
   }
@@ -1362,7 +1362,7 @@ export class SourceContainer {
     }
 
     // this.scriptSkipper.initializeSkippingValueForSource(source);
-    source.toDap().then(dap => this._dap.loadedSource({ reason: 'new', source: dap }));
+    return source.toDap().then(dap => this._dap.loadedSource({ reason: 'new', source: dap }));
   }
 
   public removeSource(source: Source, silent = false) {
@@ -1439,7 +1439,7 @@ export class SourceContainer {
         ? utils.absolutePathToFileUrl(absolutePath)
         : map.computedSourceUrl(url);
 
-      const existing = this._sourceMapSourcesByUrl.get(resolvedUrl);
+      let existing = this._sourceMapSourcesByUrl.get(resolvedUrl);
       // fix: some modules, like the current version of the 1DS SDK, managed to
       // generate self-referential sourcemaps (sourcemaps with sourcesContent that
       // have a sourceMappingUrl that refer to the same file). Avoid adding those
@@ -1448,9 +1448,15 @@ export class SourceContainer {
         continue;
       }
 
+      if(absolutePath && this._sourceByAbsolutePath.get(absolutePath)){
+        existing = this._sourceByAbsolutePath.get(absolutePath)
+      }
+
+      let source
       if (existing) {
         // In the case of a Webpack HMR, remove the old source entirely and
         // replace it with the new one.
+        source = existing
         if (isWebpackHMR(compiled.url) || isViteHmr(compiled.url)) {
           // this.removeSource(existing);
         } else {
@@ -1458,70 +1464,71 @@ export class SourceContainer {
           // existing.sourceByUrl.set(url, existing);
           // continue;
         }
-      }
+      } else {
+        this.logger.verbose(LogTag.RuntimeSourceCreate, 'Creating source from source map', {
+          inputUrl: url,
+          sourceMapId: map.id,
+          absolutePath,
+          resolvedUrl,
+        });
 
-      this.logger.verbose(LogTag.RuntimeSourceCreate, 'Creating source from source map', {
-        inputUrl: url,
-        sourceMapId: map.id,
-        absolutePath,
-        resolvedUrl,
-      });
+        const fileUrl = absolutePath && utils.absolutePathToFileUrl(absolutePath);
+        const smContent = this.sourceMapFactory.guardSourceMapFn(
+          map,
+          () => map.sourceContentFor(url, true),
+          () => null,
+        );
 
-      const fileUrl = absolutePath && utils.absolutePathToFileUrl(absolutePath);
-      const smContent = this.sourceMapFactory.guardSourceMapFn(
-        map,
-        () => map.sourceContentFor(url, true),
-        () => null,
-      );
+        let sourceMapUrl: string | undefined;
+        if (smContent) {
+          const rawSmUri = sourceUtils.parseSourceMappingUrl(smContent);
+          if (rawSmUri) {
+            const smIsDataUri = utils.isDataUri(rawSmUri);
+            if (!smIsDataUri && absolutePath) {
+              sourceMapUrl = utils.completeUrl(
+                absolutePath ? utils.absolutePathToFileUrl(absolutePath) : url,
+                rawSmUri,
+              );
+            } else {
+              sourceMapUrl = rawSmUri;
+            }
+          }
 
-      let sourceMapUrl: string | undefined;
-      if (smContent) {
-        const rawSmUri = sourceUtils.parseSourceMappingUrl(smContent);
-        if (rawSmUri) {
-          const smIsDataUri = utils.isDataUri(rawSmUri);
-          if (!smIsDataUri && absolutePath) {
-            sourceMapUrl = utils.completeUrl(
-              absolutePath ? utils.absolutePathToFileUrl(absolutePath) : url,
-              rawSmUri,
-            );
-          } else {
-            sourceMapUrl = rawSmUri;
+          if (absolutePath && sourceMapUrl) {
+            const smMetadata: ISourceMapMetadata = {
+              sourceMapUrl,
+              compiledPath: absolutePath,
+            };
+
+            if (!this.sourcePathResolver.shouldResolveSourceMap(smMetadata)) {
+              sourceMapUrl = undefined;
+            }
           }
         }
 
-        if (absolutePath && sourceMapUrl) {
-          const smMetadata: ISourceMapMetadata = {
-            sourceMapUrl,
-            compiledPath: absolutePath,
-          };
-
-          if (!this.sourcePathResolver.shouldResolveSourceMap(smMetadata)) {
-            sourceMapUrl = undefined;
-          }
-        }
+        source = new SourceFromMap(
+          this,
+          resolvedUrl,
+          absolutePath,
+          smContent !== null
+            ? () => Promise.resolve(smContent)
+            : fileUrl
+            ? () => this.resourceProvider.fetch(fileUrl).then(r => r.body)
+            : () => compiled.source.content(),
+          // Support recursive source maps if the source includes the source content.
+          // This obviates the need for the `source-map-loader` in webpack for most cases.
+          undefined,
+          compiled.runtimeScriptOffset,
+        );
+        todo.push(this.addSource(source));
       }
-
-      const source = new SourceFromMap(
-        this,
-        resolvedUrl,
-        absolutePath,
-        smContent !== null
-          ? () => Promise.resolve(smContent)
-          : fileUrl
-          ? () => this.resourceProvider.fetch(fileUrl).then(r => r.body)
-          : () => compiled.source.content(),
-        // Support recursive source maps if the source includes the source content.
-        // This obviates the need for the `source-map-loader` in webpack for most cases.
-        undefined,
-        compiled.runtimeScriptOffset,
-      );
 
       sources.push(source)
       source.compiledToSourceUrl.set(source, url);
       source.incommingSourceMaps.add(map)
       // compiled.sourceMap.sourceByUrl.set(url, source);
       map.sourceByUrl.set(url, source);
-      todo.push(this.addSource(source));
+
     }
 
     await Promise.all(todo);

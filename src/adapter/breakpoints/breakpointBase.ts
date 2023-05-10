@@ -304,7 +304,7 @@ export abstract class Breakpoint {
     }
 
     // Find all locations for this breakpoint in the new script.
-    const uiLocations = this._manager._sourceContainer.getCompiledLocationsFromSource(
+    const compiledLocations = this._manager._sourceContainer.getCompiledLocationsFromSource(
       {
         lineNumber: this.originalPosition.lineNumber,
         columnNumber: this.originalPosition.columnNumber,
@@ -313,14 +313,14 @@ export abstract class Breakpoint {
       scriptSource
     );
 
-    if (!uiLocations.length) {
+    if (!compiledLocations.length) {
       return [];
     }
 
     const promises: Promise<void>[] = [];
-    for (const uiLocation of uiLocations) {
+    for (const location of compiledLocations) {
       promises.push(
-        this._setByScriptId(thread, script, uiToRawOffset(uiLocation, source.runtimeScriptOffset)),
+        this._setByScriptId(thread, script, uiToRawOffset(location, source.runtimeScriptOffset)),
       );
     }
 
@@ -339,7 +339,7 @@ export abstract class Breakpoint {
       // Don't remove if we just set at the same location: https://github.com/microsoft/vscode/issues/102152
       const args = bp.args;
       if (
-        uiLocations.some(
+        compiledLocations.some(
           l => l.columnNumber - 1 === args.columnNumber && l.lineNumber - 1 === args.lineNumber,
         )
       ) {
@@ -358,7 +358,7 @@ export abstract class Breakpoint {
 
     await Promise.all(promises);
 
-    return uiLocations;
+    return compiledLocations;
   }
 
   /**

@@ -123,40 +123,6 @@ export class DebugSessionManager implements DebuggerCommand {
     this.sessionState = new RunningDebugSessionState();
   }
 
-  setChromeDebuggerApi(
-    _debugger: ProtocolApi.DebuggerApi,
-    _page: ProtocolApi.PageApi,
-    _runtime: ProtocolApi.RuntimeApi,
-  ) {
-    this.debugger = _debugger;
-    this.page = _page;
-    this.runtime = _runtime;
-
-    this.debugger.on('scriptParsed', e => this.onScriptLoaded(e));
-    this.debugger.on('paused', e => void this.onPaused(e));
-    this.debugger.on('resumed', () => void this.onResumed());
-    if (this.page) this.page.on('loadEventFired', e => void this.onLoad(e));
-
-    this.session = new DebugSession();
-  }
-
-  async stepOver() {
-    this.steppingOver = true;
-    await this.sessionState.stepOver();
-  }
-
-  async stepIn() {
-    this.steppingIn = true;
-    await this.sessionState.stepIn();
-  }
-
-  async stepOut() {
-    await this.sessionState.stepOut();
-  }
-
-  async continue() {
-    await this.sessionState.continue();
-  }
 
   async getStackFrames() {
     return await this.sessionState.getStackFrames();

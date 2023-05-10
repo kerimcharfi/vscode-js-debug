@@ -7,14 +7,26 @@ func foit(ptr: UnsafePointer<CChar>, size: Int){
     print(myint)
     let stepfile_text = String(cString: ptr)
     print("running foit")
-    afunc()
+    // afunc()
+    
+    anotherone()
+    anotherone()
+    anotherone()
+    anotherone()
+    anotherone()
+    anotherone()
+    // afunc()
 }
 
 func afunc() -> String{
     print("hello swifty")
     let mystr = "jeeloo"
     print(mystr)
-    // debugger()
+    debugger()
     return mystr
+}
+
+func anotherone(){
+    print("DJ KAALIIID")
 }
 

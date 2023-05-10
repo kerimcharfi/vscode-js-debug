@@ -11,7 +11,7 @@ let package = Package(
         .target(name: "imports", dependencies: []),
         .executableTarget(
             name: "swiftwasm",
-            dependencies: ["imports"],
-        ),
+            dependencies: ["imports"]
+        )
     ]
 )

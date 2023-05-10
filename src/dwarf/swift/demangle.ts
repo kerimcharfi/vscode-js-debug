@@ -15,20 +15,6 @@ async function instantiateWASM (swiftbuf) {
   await init()
 
   const wasmFs = new WasmFs()
-  // Output stdout and stderr to console
-  // const originalWriteSync = wasmFs.fs.writeSync;
-  // wasmFs.fs.writeSync = (fd, buffer, offset, length, position) => {
-  //   const text = new TextDecoder("utf-8").decode(buffer);
-  //   switch (fd) {
-  //     case 1:
-  //       console.log(text);
-  //       break;
-  //     case 2:
-  //       console.error(text);
-  //       break;
-  //   }
-  //   return originalWriteSync(fd, buffer, offset, length, position);
-  // };
 
   // Instantiate a new WASI Instance
   let wasi = new WASI({
@@ -49,7 +35,6 @@ async function instantiateWASM (swiftbuf) {
   function _debugger(){
     debugger;
   }
-
 
   function consolelog(sourcePtr, size){
     let utf8decoder = new TextDecoder();
