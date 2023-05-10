@@ -25,6 +25,7 @@ import * as utils from '../../common/urlUtils';
 import { urlToRegex } from '../../common/urlUtils';
 import { PathMapping } from '../../configuration';
 import { ISourcePathResolverOptions, SourcePathResolverBase } from '../sourcePathResolver';
+import { DwarfSourceMap } from '../../adapter/sources';
 
 export interface IOptions extends ISourcePathResolverOptions {
   baseUrl?: string;
@@ -152,6 +153,10 @@ export class BrowserSourcePathResolver extends SourcePathResolverBase<IOptions> 
   }
 
   private async sourceMapSourceToAbsolute(url: string, map: SourceMap) {
+    if(map instanceof DwarfSourceMap){
+      return url
+    }
+    
     if (!this.shouldResolveSourceMap(map.metadata)) {
       return undefined;
     }

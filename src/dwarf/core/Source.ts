@@ -17,7 +17,7 @@ export class WebAssemblyFile {
     this.dwarf.free();
   }
 
-  findFileFromLocation(loc: Protocol.Debugger.Location) {
+  findFileFromLocation(loc: {columnNumber: number}) {
     return this.dwarf.find_file_info_from_address(loc.columnNumber!);
   }
 

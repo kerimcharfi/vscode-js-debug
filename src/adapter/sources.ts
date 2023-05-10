@@ -50,6 +50,7 @@ import { IDisposable } from '../common/disposable';
 import { truthy } from '../common/objUtils';
 import { IDeferred, delay } from '../common/promiseUtil';
 import { IRootDapApi } from '../dap/connection';
+import { WebAssemblyFile } from '../dwarf/core/Source';
 
 // This is a ui location which corresponds to a position in the document user can see (Source, Dap.Source).
 export interface IUiLocation {
@@ -117,18 +118,19 @@ const defaultTimeouts: SourceMapTimeouts = {
 
 export class Script {
   source: SourceFromScript | undefined;
-
+  scriptLanguage: string | undefined
   url: string;
   scriptId: string;
   executionContextId: number;
   sourcePromise: Promise<SourceFromScript>;
   container: SourceContainer
 
-  constructor(event: Cdp.Debugger.ScriptParsedEvent, container: SourceContainer, sourcePromiseClosure: (s: Script)=>Promise<SourceFromScript>){
+  constructor(event: Cdp.Debugger.ScriptParsedEvent, container: SourceContainer, sourcePromiseClosure: (s: Script)=>Promise<SourceFromScript>, scriptLanguage: string){
     this.url = event.url
     this.scriptId = event.scriptId
     this.executionContextId = event.executionContextId
     this.container = container
+    this.scriptLanguage = scriptLanguage
     this.sourcePromise = sourcePromiseClosure(this)
   }
 };
@@ -716,8 +718,96 @@ export class SourceMap implements SourceMapConsumer {
   }
 }
 
-export class DwarfSourceMap extends SourceMap{
-  
+export interface ISourceMap{
+  pointsToByUrl: Set<Source>
+  source: Source
+
+  sourceByUrl: Map
+  finishLoading: Promise<void>
+
+  get loaded(): boolean
+
+  /**
+   * @inheritdoc
+   */
+  originalPositionFor(
+    generatedPosition: Position & { bias?: number | undefined },
+  ): NullableMappedPosition
+
+  /**
+   * @inheritdoc
+   */
+  generatedPositionFor(
+    originalPosition: MappedPosition & { bias?: number | undefined },
+  ): NullablePosition
+
+
+  /**
+   * @inheritdoc
+   */
+  allGeneratedPositionsFor(originalPosition: MappedPosition): NullablePosition[]
+}
+
+export class DwarfSourceMap implements ISourceMap{
+  sourceByUrl = new Map();
+  sources: string[]
+  constructor(private wasmFile: WebAssemblyFile, public source: Source){
+    this.sources = wasmFile.dwarf.source_list()
+  }
+
+  /**
+   * @inheritdoc
+   */
+  originalPositionFor(
+    generatedPosition: Position & { bias?: number | undefined },
+  ): NullableMappedPosition {
+    const mapped = this.wasmFile.findFileFromLocation({columnNumber: generatedPosition.column});
+    if (mapped) {
+      return {
+        source: mapped.file(),
+        line: mapped.line ?? null,
+        column: mapped.column ?? null,
+        name: mapped.file(),
+      }
+      // mapped.source = this.sourceOriginalToActual.get(mapped.source) ?? mapped.source;
+    }
+    return {
+      source: null,
+      line: null,
+      column: null,
+      name: null,
+    }
+  }
+
+  /**
+   * @inheritdoc
+   */
+  generatedPositionFor(
+    originalPosition: MappedPosition & { bias?: number | undefined },
+  ): NullablePosition {
+    const address =  this.wasmFile.findAddressFromFileLocation(
+      originalPosition.source,
+      originalPosition.line
+      // ...originalPosition,
+      // source: this.sourceActualToOriginal.get(originalPosition.source) ?? originalPosition.source,
+    );
+    return {
+      line: address ?? null,
+      column: 0,
+      lastColumn: null
+    }
+  }
+
+  /**
+   * @inheritdoc
+   */
+  allGeneratedPositionsFor(originalPosition: MappedPosition): NullablePosition[] {
+    return [this.generatedPositionFor(originalPosition)]
+  }
+
+  sourceContentFor(source: string, returnNullOnMissing?: boolean | undefined): string | null {
+    return null
+  }
 }
 
 

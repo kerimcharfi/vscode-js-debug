@@ -204,8 +204,8 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
     return list;
   }
 
-  async dumpVariable(expr: string) {
-    const frame = this.stackFrames[this.selectedFrameIndex];
+  async dumpVariable(expr: string, frame) {
+    // const frame = this.stackFrames[this.selectedFrameIndex];
 
     if (!frame.state) {
       if (!frame.statePromise) {
@@ -243,7 +243,7 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
       evaluationResult = wasmVariable.resume_with_memory_slice(slice) || evaluationResult;
 
       if(evaluationResult == "Int(4)"){
-        return
+        return evaluationResult
       }
 
       limit++;
@@ -256,8 +256,7 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
     const getStackStore = async () => {
       let wasmStacks = (
         await this.runtime.getProperties({
-          objectId: frame.scopeChain.filter(x => x.type == 'wasm-expression-stack')[0].object
-            .objectId!,
+          objectId: frame.scopeChain.filter(x => x.type == 'wasm-expression-stack')[0]?.object?.objectId,
         })
       ).result;
 

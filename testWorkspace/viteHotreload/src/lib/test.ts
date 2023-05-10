@@ -6,7 +6,7 @@ export function doesSomething(){
 
   let g: number = 5
 
-  let food: legitness = "Big Tasty "
+  let food: legitness = "Big Tasty"
   console.log(food)
   let i = 3
 }

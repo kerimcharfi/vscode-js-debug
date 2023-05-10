@@ -19,3 +19,6 @@ demos/web-worker/vscode-pwa-cdp.log
 *.cpuprofile
 *.heapsnapshot
 *.heapprofile
+
+!src/dwarf/swift/.build/debug/swiftwasm.wasm
+!src/dwarf/pkg

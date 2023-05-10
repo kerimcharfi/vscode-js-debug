@@ -47,6 +47,8 @@ export async function instantiateWASM(swiftbuf, oc){
 
     // Instantiate a new WASI Instance
     let wasi = new WASI({
+        args: [],
+        env: {},
         bindings: {
             fs: wasmFs.fs,
         },

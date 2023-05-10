@@ -25,6 +25,7 @@ import * as errors from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
 import { WebAssemblyFile } from '../dwarf/core/Source';
 import { DwarfDebugSymbolContainer } from '../dwarf/pkg';
+import { demangle } from '../dwarf/swift/demangle';
 import { NodeWorkerTarget } from '../targets/node/nodeWorkerTarget';
 import { ITarget } from '../targets/targets';
 import { IShutdownParticipants } from '../ui/shutdownParticipants';
@@ -1101,8 +1102,12 @@ export class Thread implements IVariableStoreLocationProvider {
       // frame.frame.locals = frame.locals
       // frame.frame.scopeChain.forEach(scope => scope.locals = frame.locals)
 
-      if (varlist) {
+      frame.stackFrame._name = await demangle(frame.stackFrame._name)
+      frame.stack.name = frame.stackFrame._name //await demangle(frame.stack.name)
+      frame.frame.functionName = frame.stackFrame._name //await demangle(frame.frame.functionName)
 
+
+      if (varlist) {
         for (let i = 0; i < varlist.size(); i++)
         {
             const name = varlist.at_name(i);
@@ -1115,7 +1120,7 @@ export class Thread implements IVariableStoreLocationProvider {
               name, displayName, type, groupId, childGroupId, value: undefined
             }
 
-            local.value = await dwarfSessionState.dumpVariable(displayName)
+            local.value = await dwarfSessionState.dumpVariable(displayName, frame)
 
             frame.locals.push(local)
         }
@@ -1142,16 +1147,16 @@ export class Thread implements IVariableStoreLocationProvider {
       return;
     }
 
-    switch (smartStepDirection) {
-      case StepDirection.In:
-        return this.stepInto();
-      case StepDirection.Out:
-        return this.stepOut();
-      case StepDirection.Over:
-        return this.stepOver();
-      default:
-      // continue
-    }
+    // switch (smartStepDirection) {
+    //   case StepDirection.In:
+    //     return this.stepInto();
+    //   case StepDirection.Out:
+    //     return this.stepOut();
+    //   case StepDirection.Over:
+    //     return this.stepOver();
+    //   default:
+    //   // continue
+    // }
 
     this._waitingForStepIn = undefined;
     this._pausedVariables = this.replVariables.createDetached();
@@ -1649,7 +1654,7 @@ export class Thread implements IVariableStoreLocationProvider {
       return;
     }
 
-    const script = new Script(event, this.sourceContainer, (script: Script)=>this.createSourceFromScriptEvent(event, script));
+    const script = new Script(event, this.sourceContainer, (script: Script)=>this.createSourceFromScriptEvent(event, script), event.scriptLanguage);
 
     executionContext.scripts.push(script);
     this.sourceContainer.addScript(script);
@@ -1664,8 +1669,6 @@ export class Thread implements IVariableStoreLocationProvider {
     script.source = source
     source.scriptByExecutionContext.set(this._executionContexts.get(event.executionContextId), script)
 
-
-
     let sourceMap: SourceMap | undefined
     if (event.scriptLanguage == 'WebAssembly') {
       console.error(`Start Loading ${event.url}...`);
@@ -1679,7 +1682,8 @@ export class Thread implements IVariableStoreLocationProvider {
       this.dwarfDebugSession.loadedWebAssembly(file);
 
       console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
-      sourceMap = new DwarfSourceMap()
+      sourceMap = new DwarfSourceMap(file, source)
+      await this.sourceContainer._addSourceMapSources(script, sourceMap)
     }
 
     if (event.sourceMapURL) {

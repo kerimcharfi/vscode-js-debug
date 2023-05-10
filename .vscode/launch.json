@@ -202,6 +202,54 @@
       "args": [],
       "cwd": "${workspaceFolder:vscode-js-debug}/testWorkspace\\viteHotreload\\src\\lib\\swift",
       "preLaunchTask": "swift: Build Release swiftwasm (testWorkspace\\viteHotreload\\src\\lib\\swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Debug swiftwasm (testWorkspace/viteHotreload/src/lib/swift)",
+      "program": "${workspaceFolder:vscode-js-debug}/testWorkspace/viteHotreload/src/lib/swift/.build/debug/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/testWorkspace/viteHotreload/src/lib/swift",
+      "preLaunchTask": "swift: Build Debug swiftwasm (testWorkspace/viteHotreload/src/lib/swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Release swiftwasm (testWorkspace/viteHotreload/src/lib/swift)",
+      "program": "${workspaceFolder:vscode-js-debug}/testWorkspace/viteHotreload/src/lib/swift/.build/release/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/testWorkspace/viteHotreload/src/lib/swift",
+      "preLaunchTask": "swift: Build Release swiftwasm (testWorkspace/viteHotreload/src/lib/swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Debug swiftwasm (src/dwarf/swift)",
+      "program": "${workspaceFolder:vscode-js-debug}/src/dwarf/swift/.build/debug/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/src/dwarf/swift",
+      "preLaunchTask": "swift: Build Debug swiftwasm (src/dwarf/swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Release swiftwasm (src/dwarf/swift)",
+      "program": "${workspaceFolder:vscode-js-debug}/src/dwarf/swift/.build/release/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/src/dwarf/swift",
+      "preLaunchTask": "swift: Build Release swiftwasm (src/dwarf/swift)"
     }
   ]
 }

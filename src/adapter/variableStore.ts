@@ -548,7 +548,8 @@ class Variable implements IVariable {
   ): Promise<Dap.Variable> {
     let name = this.context.name;
     if (this.context.parent instanceof Scope) {
-      name = await this.context.parent.getRename(name);
+      // TODO: enable again
+      // name = await this.context.parent.getRename(name);
     }
 
     return Promise.resolve({
