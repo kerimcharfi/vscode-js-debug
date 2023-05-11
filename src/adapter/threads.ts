@@ -1799,7 +1799,7 @@ export class Thread implements IVariableStoreLocationProvider {
 
       console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
       // TODO: assert script.source
-      sourceMap = new DwarfSourceMap(file, script.source!)
+      sourceMap = new DwarfSourceMap(file, script.source!, deferred)
     }
 
     if( event.sourceMapURL){

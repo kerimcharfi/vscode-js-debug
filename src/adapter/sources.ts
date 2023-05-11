@@ -751,8 +751,11 @@ export interface ISourceMap{
 export class DwarfSourceMap implements ISourceMap{
   sourceByUrl = new Map();
   sources: string[]
-  constructor(private wasmFile: WebAssemblyFile, public source: Source){
+  finishLoading: Promise<void>;
+
+  constructor(private wasmFile: WebAssemblyFile, public source: Source, public deferred: IDeferred<void>){
     this.sources = wasmFile.dwarf.source_list()
+    this.finishLoading = deferred.promise
   }
 
   /**
@@ -1366,7 +1369,6 @@ export class SourceContainer {
   }
 
   public removeSource(source: Source, silent = false) {
-    return
     const existing = this._sourceByReference.get(source.sourceReference);
     if (existing === undefined) {
       return; // already removed
@@ -1377,6 +1379,8 @@ export class SourceContainer {
       'Expected source to be the same as the existing reference',
     );
     this._sourceByReference.delete(source.sourceReference);
+    this._sourceByAbsolutePath.delete(source.absolutePath);
+
 
     // check for overwrites:
     if (this._sourceByOriginalUrl.get(source.url) === source) {
@@ -1386,11 +1390,11 @@ export class SourceContainer {
     if (source instanceof SourceFromMap) {
       this._sourceMapSourcesByUrl.delete(source.url);
       for (const [compiled, key] of source.compiledToSourceUrl) {
+
         // compiled.sourceMap.sourceByUrl.delete(key)
       }
     }
 
-    this._sourceByAbsolutePath.delete(source.absolutePath);
     if (source.outgoingSourceMap) {
       this._permanentlyDisabledSourceMaps.delete(source);
       this._temporarilyDisabledSourceMaps.delete(source);
@@ -1401,7 +1405,6 @@ export class SourceContainer {
     }
 
     // todo: enably again
-    return
 
     if (!source.outgoingSourceMap) return;
 
@@ -1415,19 +1418,21 @@ export class SourceContainer {
       return;
     }
     this.logger.assert(
-      sourceMap.compiled.has(source),
+       sourceMap.source === source,
       `Source map ${source.url} does not contain source ${source.url}`,
     );
 
-    sourceMap.compiled.delete(source);
-    if (!sourceMap.compiled.size) {
-      if (sourceMap) sourceMap.destroy();
-      this._sourceMaps.delete(source.outgoingSourceMap.url);
-    }
+    // sourceMap.sourceByUrl.delete(source);
+    // if (!sourceMap.compiled.size) {
+
+      // this._sourceMaps.delete(source.outgoingSourceMap?.url);
+    // }
     // Source map could still be loading, or failed to load.
     if (sourceMap) {
       this._removeSourceMapSources(source, sourceMap, silent);
     }
+
+    if (sourceMap) sourceMap.destroy();
   }
 
   async _addSourceMapSources(compiled: Script, map: SourceMap) {
@@ -1453,7 +1458,7 @@ export class SourceContainer {
       }
 
       let source
-      if (existing) {
+      if (existing instanceof SourceFromMap) {
         // In the case of a Webpack HMR, remove the old source entirely and
         // replace it with the new one.
         source = existing
@@ -1536,21 +1541,10 @@ export class SourceContainer {
   }
 
   private _removeSourceMapSources(compiled: Source, map: SourceMap, silent: boolean) {
-    for (const url of map.sources) {
-      compiled.sourceMaps.forEach(smap => {
-        const source = smap.sourceByUrl.get(url);
-        if (!source) {
-          // Previously, we would have always expected the source to exist here.
-          // However, with webpack HMR, we can unload sources that get replaced,
-          // so replaced sources will no longer exist in the map.
-          return;
-        }
-
-        // compiled.sourceMap.sourceByUrl.delete(url);
-        source.compiledToSourceUrl.delete(compiled);
-        if (source.compiledToSourceUrl.size) return;
-        this.removeSource(source, silent);
-      })
+    for (const sourceFromMap of map.sourceByUrl.values()) {
+      sourceFromMap.incommingSourceMaps.delete(map);
+      if (sourceFromMap.incommingSourceMaps.size) return;
+      this.removeSource(sourceFromMap, silent);
     }
   }
 

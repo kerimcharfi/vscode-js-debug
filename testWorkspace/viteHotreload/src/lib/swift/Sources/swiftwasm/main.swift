@@ -6,7 +6,7 @@ func foit(ptr: UnsafePointer<CChar>, size: Int){
     let anotherint = myint + size
     print(myint)
     let stepfile_text = String(cString: ptr)
-    print("running foit")
+    print("running foit    ")
     // afunc()
     
     anotherone()
