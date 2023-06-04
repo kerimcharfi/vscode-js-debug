@@ -9,11 +9,13 @@
     // const buf = await readFile("../.build/wasm32-unknown-wasi/release/swiftwasm.wasm");
     const buf = await fetch(swiftwasmurl).then(response => response.arrayBuffer());
 
-    const { wasi, instance, string } = await instantiateWASM(buf, {});
+    const { wasi, instance, string } = await instantiateWASM(buf, {repl: ()=>{}});
 
     function foit(ptr) {
       instance.exports.foit(ptr);
     }
+
+
 
 
     let exitCode = 'none';

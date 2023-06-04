@@ -19,11 +19,12 @@
 __attribute__((__import_name__("consolelog")))
 extern void consolelog(int targetPtr, int size);
 
-__attribute__((__import_name__("repl")))
-extern void repl(int targetPtr);
-
 __attribute__((__import_name__("debugger")))
 extern void debugger(void);
+
+
+__attribute__((__import_name__("foit")))
+extern void testfn(int targetPtr);
 
 // __attribute__((__import_name__("StringStream")))
 // extern int StringStream(int CStringPtr);

@@ -111,7 +111,8 @@ export async function instantiateWASM(swiftbuf, oc){
             consolelog,
             // cpp_memset,
             // cpp_memget,
-            debugger: _debugger
+            debugger: _debugger,
+            repl: ()=>{}
         }
     }
     );

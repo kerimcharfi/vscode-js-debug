@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "watch:swift": "nodemon  -e js,swift --watch ./src/lib/swift/Sources/swiftwasm/**/*.swift ./buildswift.js",
+    "build:swift": "node ./buildswift.js",
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {

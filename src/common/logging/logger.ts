@@ -138,7 +138,7 @@ export class Logger implements ILogger, IDisposable {
         throw new Error(message);
       }
 
-      debugger; // break when running in development
+      // debugger; // break when running in development
       return false;
     }
 

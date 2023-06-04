@@ -3,6 +3,7 @@
   import viteLogo from '/vite.svg'
   import Counter from './lib/Counter.svelte'
   import Swift from './lib/swift/swift.svelte'
+  import Repl from './lib/repl/repl.svelte'
 
   let showSwift = false;
 </script>
@@ -30,7 +31,8 @@
     <Swift/>
   {/if} -->
 
-  <Swift/>
+  <!-- <Swift/> -->
+  <Repl/>
   <button on:click={()=>showSwift=true}>
     click
   </button>
