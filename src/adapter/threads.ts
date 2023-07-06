@@ -46,8 +46,11 @@ import {
 
 import {
   PausedDebugSessionState,
+  generateSwiftStackFrameCode2
 } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 
+import { exec } from 'child_process';
+import { writeFileSync } from 'fs';
 import { sourceMapParseFailed } from '../dap/errors';
 import {
   DwarfSourceMap,
@@ -1050,6 +1053,70 @@ export class Thread implements IVariableStoreLocationProvider {
     })
 
     await Promise.all(promises.filter(el=>el))
+
+    const frame = pausedDetails.stackTrace.frames[0]
+    console.time("repl")
+    console.time("compiling repl code")
+    let swiftReplCode = generateSwiftStackFrameCode2(frame.locals)
+    writeFileSync(".repl/repl_13421.swift", swiftReplCode)
+    exec(
+      '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi .repl/repl_13421.swift  -o /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test2.wasm -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/repl/.build/debug -L /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/swift/.build/debug -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=6000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=repl -Xlinker --table-base=35000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --export-dynamic',
+      // '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi .repl/repl_13421.swift -o /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test2.wasm -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug -L /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/swift/.build/debug -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=6000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=repl -Xlinker --table-base=35000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --shared',
+      (error, stdout, stderr) => {
+        if (error) {
+          console.log(`error: ${error.message}`)
+        }
+        if (stderr) {
+          console.log(`stderr: ${stderr}`)
+        }
+        console.log(`stdout: ${stdout}`)
+      },
+    )
+    console.timeEnd("compiling repl code")
+
+    const args = []
+
+    for(const local of frame.locals){
+      if(local.value.address){
+        args.push(local.value.address)
+      }
+    }
+    console.time("evaluateOnCallFrame")
+
+    let evalResult = (await this.cdp.Debugger.evaluateOnCallFrame({
+      callFrameId: frame?.callFrame.callFrameId,
+      expression: `
+      let result = "[]"
+      try{
+        let ptr = window.repl(${args.join(", ")})
+        // const stdout = window.repl_wasi.getStdoutString()
+        // if(stdout)
+        //   console.log(stdout);
+        // const stderr = window.repl_wasi.getStderrString();
+        // if(stderr)
+        //   console.error(stderr);
+        result = window.repl_JsString(ptr)
+        //let result = JSON.parse(resultStr)
+        console.log(result)
+      } catch (e) {
+        console.error(e)
+      }
+      result
+      `,
+      returnByValue: true,
+    }))?.result?.value;
+
+    console.timeEnd("evaluateOnCallFrame")
+
+    let vars = []
+    if(evalResult){
+      vars = JSON.parse(evalResult)
+    }
+    for(let variable of vars){
+      let local = pausedDetails.stackTrace.frames[0].locals.find(local => local.name ==  variable.name)
+      local.value = variable.value
+    }
+    console.timeEnd("repl")
 
     if (this._excludedCallers.length) {
       if (await this._matchesExcludedCaller(this._pausedDetails.stackTrace)) {

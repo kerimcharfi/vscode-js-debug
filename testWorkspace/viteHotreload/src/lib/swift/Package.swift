@@ -5,8 +5,8 @@ import PackageDescription
 
 let package = Package(
     name: "swift-wasm",
-        dependencies: [
-        .package(name: "CustomDump", url: "https://github.com/pointfreeco/swift-custom-dump", from: "0.3.0")
+    dependencies: [
+        .package(name: "CustomDump", path: "/home/ubu/coding/repos/swift-custom-dump")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -14,11 +14,13 @@ let package = Package(
         .target(name: "imports", dependencies: []),
         .target(name: "mycode", dependencies: [
             "imports",
+            "CustomDump"
             ]),
         .executableTarget(
             name: "swiftwasm",
             dependencies: [
-                "mycode"
+                "mycode",
+                // "CustomDump"
             ],
             swiftSettings: [.unsafeFlags([
                 // "-I", "Sources/hello_cpp",

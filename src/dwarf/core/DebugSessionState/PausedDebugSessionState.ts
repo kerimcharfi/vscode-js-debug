@@ -198,10 +198,12 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
 
     let evaluationResult = wasmVariable.evaluate() || '<failure>';
     let limit = 0;
+    let address = undefined;
 
     //while ((expr == "myint" || expr == "size" || expr == "anotherint" || wasmVariable.is_required_memory_slice()) && limit < 2) {
     while (wasmVariable.is_required_memory_slice() && limit < 20) {
       const slice = wasmVariable.required_memory_slice();
+      address = slice.address
       const result = await this.memoryEvaluator.evaluate(
         stackFrame.callFrame.callFrameId,
         slice.address,
@@ -218,7 +220,11 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
       limit++;
     }
 
-    return evaluationResult;
+    return {
+      evaluationResult,
+      address
+
+    };
   }
 
   private async createWasmValueStore(frame: Protocol.Debugger.CallFrame) {
@@ -292,4 +298,105 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
       locals: LocalsStore,
     };
   }
+}
+
+export function generateSwiftStackFrameCode(vars){
+  let args = []
+  let pointerDeref = ""
+  let variableDumps = ""
+
+  for(const {name, type, value} of vars){
+    if(!value.address) continue
+
+    args.push(`__${name}_ptr: UnsafeMutableRawPointer`)
+
+    pointerDeref = pointerDeref + `let ${name} = __${name}_ptr.assumingMemoryBound(to: ${type}.self).pointee\n  `
+
+    variableDumps = variableDumps + `print("--------${name}||${type}--------")\n  dump(${name}, maxDepth: 2)\n  `
+  }
+
+  return `import mycode
+import imports
+
+@_cdecl("repl")
+func repl(${args.join(", ")}) {
+
+  ${pointerDeref}
+  ${variableDumps}
+}`
+}
+
+
+export function generateSwiftStackFrameCode2(vars){
+  let args = []
+  let pointerDeref = ""
+  let variableDumps = ""
+
+  for(const {name, type, value} of vars){
+    if(!value.address) continue
+
+    args.push(`__${name}_ptr: UnsafeMutableRawPointer`)
+
+    pointerDeref = pointerDeref + `let ${name} = __${name}_ptr.assumingMemoryBound(to: ${type}.self).pointee\n  `
+
+    variableDumps = variableDumps + `Variable(name: "${name}", type: "${type}", value: "\\(${name})"),\n    `
+  }
+
+  return `
+  import mycode
+  import imports
+  import repl_runtime
+
+  @_cdecl("repl")
+  func repl(${args.join(", ")}) -> UnsafePointer<UInt8> {
+
+    ${pointerDeref}
+    let variables = [
+      ${variableDumps}
+    ]
+
+    return dump_variables(variables)
+  }`
+}
+
+
+export function generateSwiftStackFrameCode3(vars){
+  let args = []
+  let pointerDeref = ""
+  let variableDumps = ""
+
+  for(const {name, type, value} of vars){
+    if(!value.address) continue
+
+    args.push(`__${name}_ptr: UnsafeMutableRawPointer`)
+
+    pointerDeref = pointerDeref + `let ${name} = __${name}_ptr.assumingMemoryBound(to: ${type}.self).pointee\n  `
+
+    variableDumps = variableDumps + `Variable(name: "${name}", type: "${type}", value: "\(${name})"),\n    `
+  }
+
+  return `import mycode
+import imports
+import Foundation
+
+struct Variable: Codable{
+  var name: String
+  var type: String
+  var value: String
+}
+
+@_cdecl("repl")
+func repl(${args.join(", ")}) {
+
+  ${pointerDeref}
+  let variables = [
+    ${variableDumps}
+  ]
+
+  let encoder = JSONEncoder()
+  encoder.outputFormatting = JSONEncoder.OutputFormatting.prettyPrinted
+  let encodedData = try! encoder.encode(variables)
+  let jsonString = String(data: encodedData, encoding: .utf8)
+  print(jsonString!)
+}`
 }

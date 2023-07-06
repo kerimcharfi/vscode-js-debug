@@ -1,5 +1,7 @@
 
 import imports
+// import CustomDump
+import Foundation
 
 struct astruct{
     var a: Float32 = 5
@@ -55,30 +57,43 @@ func replSim(_ ptr: Int32) {
     print(instance.maxSpeed)
 }
 
+func jsonDump(){
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = JSONEncoder.OutputFormatting.prettyPrinted
+    let encodedData = try! encoder.encode(["dsfsdf"])
+    let jsonString = String(data: encodedData, encoding: .utf8)
+}
+
 @_cdecl("foit")
 // func foit(ptr: UnsafePointer<CChar>, size: Int){
 func foit(ptr: Int32){
-    let myint = 47; // var30
+    let constantInt = 47; // var30
     // let anotherint = myint + size
     // print(myint)
     // let stepfile_text = String(cString: ptr)
     var atire = Tire()
-    var aobj = Car()
+    var aobj =  Car()
     // var aobj = UnsafeMutablePointer<Car>(bitPattern: Int(ptr))!.pointee
     let useless = uselessType()
-    print(234)
-    print(useless)
+    // print(234)
+    // print(useless)
     var address = withUnsafeMutablePointer(to: &aobj) {i32($0)}
 
-    print(atire)
+    // customDump(atire)
+
+
+    print("---------------")
+
+    // print(atire)
     // aobj.maxSpeed = 401
     // aobj.name = "lamborgotti"
     // var address = withUnsafeMutablePointer(to: &aobj) {i32($0)}
     // afunc(address)
     // replSim(address)
-    repl(address)
+    // repl(address)
+    // dump(aobj)
 
-    debugger()
+    // debugger()
     // print(aobj)
     // dump(aobj)
     // dump(aobj.tires[0])

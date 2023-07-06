@@ -10,7 +10,7 @@ console.log('Rebuilding Swift')
 
 process.chdir(path.join(__dirname, 'src/lib/swift'))
 exec(
-  '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swift build --triple wasm32-unknown-wasi -Xlinker --export=foit -Xlinker --export=malloc -Xlinker --global-base=1024 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export-dynamic',
+  '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swift build --triple wasm32-unknown-wasi -Xlinker --export=foit -Xlinker --global-base=1024 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export-dynamic -Xlinker --unresolved-symbols=import-dynamic',
   (error, stdout, stderr) => {
     if (error) {
       console.log(`error: ${error.message}`)
@@ -25,7 +25,7 @@ exec(
 
 process.chdir(path.join(__dirname, 'src/lib/repl'))
 exec(
-  '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swift build --triple wasm32-unknown-wasi -Xlinker --export=repl3 -Xlinker --export=malloc -Xlinker --global-base=6000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__table_base  -Xlinker --table-base=35000',
+  '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-25-a/usr/bin/swift build --triple wasm32-unknown-wasi -Xlinker --export=__stack_pointer -Xlinker --export=malloc -Xlinker --export-if-defined=__start_swift5_typeref -Xlinker --export-if-defined=__stop_swift5_typeref -Xlinker --export-if-defined=__start_swift5_reflstr -Xlinker --export-if-defined=__stop_swift5_reflstr -Xlinker --export-if-defined=__start_swift5_mpenum -Xlinker --export-if-defined=__start_swift5_builtin -Xlinker --export-if-defined=__stop_swift5_builtin  -Xlinker --export-if-defined=__start_swift5_fieldmd -Xlinker --export-if-defined=__stop_swift5_fieldmd -Xlinker --export-if-defined=__start_swift5_capture -Xlinker --export-if-defined=__stop_swift5_capture  -Xlinker --export-if-defined=__start_swift5_assocty -Xlinker --export-if-defined=__stop_swift5_assocty -Xlinker --export-if-defined=__start_swift5_type_metadata -Xlinker --export-if-defined=__stop_swift5_type_metadata -Xlinker --export-if-defined=__start_swift5_protocol_conformances -Xlinker --export-if-defined=__stop_swift5_protocol_conformances -Xlinker --export-if-defined=__sstop_swift5_protocol_conformances -Xlinker --export-if-defined=__start_swift5_protocols -Xlinker --export-if-defined=__stop_swift5_protocols -Xlinker --export-if-defined=__stop_swift5_mpenum -Xlinker --global-base=8000000 -Xlinker --table-base=40000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export-dynamic',
   (error, stdout, stderr) => {
     if (error) {
       console.log(`error: ${error.message}`)

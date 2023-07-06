@@ -111,6 +111,11 @@ export class VariableVector {
 * @param {number} index
 * @returns {string}
 */
+  at_address(index: number): string;
+/**
+* @param {number} index
+* @returns {string}
+*/
   at_display_name(index: number): string;
 /**
 * @param {number} index

@@ -41,6 +41,7 @@ export function wasmlineinfo_file(a: number, b: number): void;
 export function __wbg_variablevector_free(a: number): void;
 export function variablevector_size(a: number): number;
 export function variablevector_at_name(a: number, b: number, c: number): void;
+export function variablevector_at_address(a: number, b: number, c: number): void;
 export function variablevector_at_display_name(a: number, b: number, c: number): void;
 export function variablevector_at_type_name(a: number, b: number, c: number): void;
 export function variablevector_at_group_id(a: number, b: number): number;

@@ -14,7 +14,7 @@ try{
 
 function isObject(item) {
     return (item && typeof item === 'object' && !Array.isArray(item));
-  }
+}
   
 function mergeDeep(target, source) {
     let output = Object.assign({}, target);
@@ -31,8 +31,16 @@ function mergeDeep(target, source) {
       });
     }
     return output;
-  }
+}
 
+function nullTerminatedSubarray(array: Uint8Array, begin=0){
+    for(let i=begin; i<array.length; i++){
+        if(array[i] === 0) {
+            return array.subarray(begin, i)
+        }
+    }
+    return array
+}
 
 export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true){
     await init();
@@ -47,7 +55,7 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true){
                 // if(key[0] == "_" && key[1] != "_"){
                 // let fn_name = key.slice(1)
                 let fn_name = key
-                if(wasm_import.name == fn_name){
+                if(wasm_import.module != "GOT.func" && wasm_import.name == fn_name){
                     if(wasm_import.kind == 'global'){
                         // linked_fns[wasm_import.module][fn_name] = new WebAssembly.Global({ value: "i32", mutable: true }, fns[key].value);                        
                         if(wasm_import.module == "GOT.mem"){
@@ -60,6 +68,16 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true){
                     }
                     linked = true
                     break
+                }
+                if(wasm_import.module == key){
+                    for(let fn_name in fns[key]){
+                        if(wasm_import.name == fn_name){
+                            linked_fns[wasm_import.module][fn_name] = fns[key][fn_name]
+                            linked = true
+                            console.log(fn_name)
+                            break
+                        }
+                    }
                 }
             }
             // if(!linked && wasm_import.kind != 'global'){
@@ -114,7 +132,7 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true){
             if(instance.exports.memory){
                 swiftmem = new Uint8Array(instance.exports.memory.buffer)
             } else {
-                swiftmem = new Uint8Array(linked_fns.memory)
+                swiftmem = new Uint8Array(linked_fns.env.memory.buffer)
             }
         
         }
@@ -144,9 +162,19 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true){
     console.log("wasi.instantiate")
 
     function consolelog(sourcePtr, size){
-        let utf8decoder = new TextDecoder();
-        console.log(utf8decoder.decode(getMem().subarray(sourcePtr, sourcePtr+size-1)));
+        console.log(JsString(sourcePtr, size));
     }
+
+    function JsString(sourcePtr, size?){
+        let data
+        if(!size){
+            data = nullTerminatedSubarray(getMem(), sourcePtr)
+        } else {
+            data = getMem().subarray(sourcePtr, sourcePtr+size-1)
+        }
+        return new TextDecoder().decode(data);
+    }
+
     let imports = wasi.getImports(module);
 
     function _debugger(){
@@ -160,6 +188,8 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true){
     })
 
     imports = mergeDeep(imports, linked_fns)
+    console.log(imports)
+
 
     let instance = await WebAssembly.instantiate(module, imports)
     // {
@@ -211,6 +241,6 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true){
     // }
 
     return {
-        wasi, instance, string: SwiftString, getMem
+        wasi, instance, string: SwiftString, JsString, getMem
     }
 }

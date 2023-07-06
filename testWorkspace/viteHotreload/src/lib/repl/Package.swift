@@ -11,17 +11,18 @@ let package = Package(
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
-        .target(name: "imports", dependencies: []),
-        // .target(name: "mycode", dependencies: ["imports", "CustomDump"]),
+        .target(name: "runtime_imports", dependencies: []),
+        // .target(name: "repl", dependencies: []),
+        .target(name: "repl_runtime", dependencies: ["runtime_imports", "CustomDump"]),
         .executableTarget(
             name: "repl",
             dependencies: [
-                "imports",   
+                "repl_runtime",   
             ],
             swiftSettings: [.unsafeFlags([
                 // "-I", "Sources/hello_cpp",
                 // "-enable-experimental-cxx-interop",
-                // "-emit-bc"
+                "-emit-module"
             ])]
         )
                 // .executableTarget(name: "anothermain", dependencies: ["repl"]),

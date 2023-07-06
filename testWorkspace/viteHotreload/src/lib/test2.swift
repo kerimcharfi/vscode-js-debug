@@ -1,45 +1,53 @@
-// import VogelModule
-
-// vogel()
-
-// func arepl(hello: Vogel){
-//     print(hello)
-// }
 import mycode
 import imports
+import repl_runtime
+// import CustomDump
+// import Foundation
 
+class MyMightyStruct{
+    var importantProperty = 4
+}
+
+// class Variable: Codable{
+//   var name: String
+//   var type: String
+//   var value: String
+
+//   init(name: String, type: String, value: String){
+//     self.name = name
+//     self.type = type
+//     self.value = value
+//   }
+// }
 
 @_cdecl("repl")
-func repl(ptr: UnsafeMutableRawPointer) {
-    debugger()
+func repl(ptr: UnsafeMutableRawPointer) -> UnsafePointer<UInt8> {
+    let x = ptr.assumingMemoryBound(to: Car.self).pointee
+    let b = MyMightyStruct();
+    // debugger()
     // let x = UnsafeMutablePointer<aclass>(ptr)
     // var car = Car()
     var tire = Tire()
     var onestruct = astruct()
     // print(car.maxSpeed)
-    let x = ptr.assumingMemoryBound(to: Car.self)
-    
-    // print(x.pointee)
-    print(onestruct)
-    dump(x.pointee)
-    dump(x.pointee.maxSpeed)
-    dump(x.pointee.myDict)
-    // dump(x.pointee.mySet)
-    // dump(x.pointee.myTuple)
-    // print(x.pointee.maxSpeed)
-    // dump(x.pointee.myList)
-    // print(tire)
-    // dump(tire)
-    // dump(x.pointee.tire)
-    // x.pointee.
-    // let myint = 47; // var30
-    // let anotherint = myint + size
-    // print(myint)
-    // let stepfile_text = String(cString: ptr)
-    // var aobj = aclass()
 
-    // var address = withUnsafeMutablePointer(to: &aobj) {UnsafeMutablePointer<Void>($0)}
+    let variables = [
+        Variable(name: "tire", type: "Tire", value: "\(tire)")
+    ]
 
-    // repl(address)
+
+    // let encoder = JSONEncoder()
+    // encoder.outputFormatting = JSONEncoder.OutputFormatting.prettyPrinted
+    // let encodedData = try! encoder.encode(variables)
+    // let jsonString = String(data: encodedData, encoding: .utf8)
+    // print(jsonString!)
+    return dump_variables(variables)
+
+    // x.maxSpeed = 1243
+    // print(b)
+    // print(onestruct)
+    // customDump(tire)
     // debugger()
 }
+
+print("hello <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
