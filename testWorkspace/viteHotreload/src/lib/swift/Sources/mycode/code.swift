@@ -1,7 +1,5 @@
 
 import imports
-// import CustomDump
-import Foundation
 
 struct astruct{
     var a: Float32 = 5
@@ -55,13 +53,6 @@ func replSim(_ ptr: Int32) {
     let instance = UnsafeMutablePointer<Car>(bitPattern: Int(ptr))!.pointee
     // print("class.init @\(ptr): \(instance.myinti)")
     print(instance.maxSpeed)
-}
-
-func jsonDump(){
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = JSONEncoder.OutputFormatting.prettyPrinted
-    let encodedData = try! encoder.encode(["dsfsdf"])
-    let jsonString = String(data: encodedData, encoding: .utf8)
 }
 
 @_cdecl("foit")
