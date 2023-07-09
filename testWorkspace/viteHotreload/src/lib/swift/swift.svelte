@@ -1,4 +1,4 @@
-<script>
+<!-- <script>
   import { instantiateWASM } from './wasm';
 
   // import STEP_FILE_TEXT from '@/assets/step-files/basic_nobends.step?raw';
@@ -41,4 +41,4 @@
   main();
 </script>
 
-hello
+hello -->

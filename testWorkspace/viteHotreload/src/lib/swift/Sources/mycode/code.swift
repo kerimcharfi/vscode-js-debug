@@ -5,9 +5,10 @@ import JavaScriptKit
 
 let alert = JSObject.global.alert.function!
 let document = JSObject.global.document
+let JSON = JSObject.global.JSON
 
 
-struct Response: Decodable {
+public struct Response: Decodable {
     let uuid: String
 }
 
@@ -125,9 +126,13 @@ func foit(ptr: Int32){
                 do {
                     let response = try await fetch("https://httpbin.org/uuid").value
                     let json = try await JSPromise(response.json().object!)!.value
+                    JSObject.global.console.log("hello")
+                    let jsonstring = JSON.stringify(json)
                     // let parsedResponse = try JSValueDecoder().decode(Response.self, from: json)
-                    alert(json)
-                    print(response)
+                    alert(jsonstring)
+                    print(jsonstring)
+                    JSObject.global.console.log(String(describing: type(of: jsonstring)))
+
                 } catch {
                     print(error)
                 }
