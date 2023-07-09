@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "watch:swift": "nodemon  -e js,swift --watch ./src/lib/swift/Sources/swiftwasm/**/*.swift ./buildswift.js",
+    "build:swiftruntime": "node ./buildswiftruntime.js",
     "build:swift": "node ./buildswift.js",
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
@@ -23,6 +24,7 @@
   "dependencies": {
     "@wasmer/wasi": "^1.2.2",
     "@wasmer/wasmfs": "^0.12.0",
+    "javascript-kit-swift": "^0.18.0",
     "nodemon": "^2.0.22"
   }
 }

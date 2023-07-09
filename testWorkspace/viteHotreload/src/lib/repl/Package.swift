@@ -12,8 +12,8 @@ let package = Package(
       // Targets are the basic building blocks of a package, defining a module or a test suite.
       // Targets can depend on other targets in this package and products from dependencies.
       // .target(name: "repl", dependencies: []),
-      .target(name: "repl_runtime", dependencies: ["runtime_imports",
-              .product(name: "ExtrasJSON", package: "swift-extras-json"),
+      .target(name: "repl_runtime", dependencies: [
+            .product(name: "ExtrasJSON", package: "swift-extras-json"),
       ]),
       .executableTarget(
           name: "repl",
