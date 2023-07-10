@@ -42,55 +42,33 @@ function nullTerminatedSubarray(array: Uint8Array, begin=0){
     return array
 }
 
-export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true){
+
+export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true, force = true){
     await init();
-    function link(moduleImports, fns){
+    function link(moduleImports, symbols){
         let linked_fns = {}
         for(let wasm_import of moduleImports){
-            let linked = false
             if(!linked_fns[wasm_import.module]){
                 linked_fns[wasm_import.module] = {}
             }
-            for(let key in fns){
-                // if(key[0] == "_" && key[1] != "_"){
-                // let fn_name = key.slice(1)
-                let fn_name = key
-                if(wasm_import.module != "GOT.func" && wasm_import.name == fn_name){
-                    if(wasm_import.kind == 'global'){
-                        // linked_fns[wasm_import.module][fn_name] = new WebAssembly.Global({ value: "i32", mutable: true }, fns[key].value);                        
-                        if(wasm_import.module == "GOT.mem"){
-                            linked_fns[wasm_import.module][fn_name] = new WebAssembly.Global({ value: "i32", mutable: true }, fns[key].value);
-                        } else {
-                            linked_fns[wasm_import.module][fn_name] = fns[key]
-                        }
-                    } else {
-                        linked_fns[wasm_import.module][fn_name] = fns[key]
-                    }
-                    linked = true
-                    break
-                }
-                if(wasm_import.module == key){
-                    for(let fn_name in fns[key]){
-                        if(wasm_import.name == fn_name){
-                            linked_fns[wasm_import.module][fn_name] = fns[key][fn_name]
-                            linked = true
-                            console.log(fn_name)
-                            break
-                        }
-                    }
-                }
+            let sym = symbols[wasm_import.module]?.[wasm_import.name]
+            if(sym === undefined){
+                sym = symbols[wasm_import.name]
             }
-            // if(!linked && wasm_import.kind != 'global'){
-            //     linked_fns[wasm_import.module][wasm_import.name] = ()=>{}
-            // }
-            // if(!linked && wasm_import.kind == 'global'){
-            //     linked_fns[wasm_import.module][wasm_import.name] = new WebAssembly.Global({ value: "i32", mutable: true }, 0)
-            // }
-            // if(wasm_import.name == "main"){
-            //     linked_fns[wasm_import.module][wasm_import.name] = new WebAssembly.Global({ value: "i32", mutable: true }, 0)
-            // }
+            if(sym === undefined){
+                if(!force)
+                    throw "cannot resolve symbol " + wasm_import.module + "::" + wasm_import.name
+                else
+                    continue
+            }
 
-            // }
+
+            if(wasm_import.module == "GOT.mem"){
+                linked_fns[wasm_import.module][wasm_import.name] = new WebAssembly.Global({ value: "i32", mutable: true }, sym.value);
+            } else {
+                linked_fns[wasm_import.module][wasm_import.name] = sym
+            }
+                
         }
         return linked_fns
     }
