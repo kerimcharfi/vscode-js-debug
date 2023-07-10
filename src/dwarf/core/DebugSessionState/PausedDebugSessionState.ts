@@ -346,6 +346,7 @@ export function generateSwiftStackFrameCode2(vars){
   import mycode
   import imports
   import repl_runtime
+  import JavaScriptKit
 
   @_cdecl("repl")
   func repl(${args.join(", ")}) -> UnsafePointer<UInt8> {
