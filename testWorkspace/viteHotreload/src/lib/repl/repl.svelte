@@ -1,5 +1,5 @@
 <script>
-  import { instantiateWASM } from './wasm';
+  import { instantiateWASM, init } from './wasm';
   import { SwiftRuntime } from '/home/ubu/coding/repos/JavaScriptKit/Runtime/lib/index.mjs';
   // import STEP_FILE_TEXT from '@/assets/step-files/basic_nobends.step?raw';
   // import STEP_FILE_TEXT from "@/assets/step-files/assembly.step?raw"
@@ -7,19 +7,30 @@
   // import runtimeurl from '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/repl/Sources/repl_runtime/repl_runtime.wasm?url';
   // import swiftwasmurl from '../swift/.build/debug/mycode.wasm?url';
   import swiftwasmurl from '../swift/.build/debug/swiftwasm.wasm?url';
-  import replwasmurl from '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test2.wasm?url';
+  // import replwasmurl from '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test2.wasm?url';
 
   let main_wasi;
   const swift = new SwiftRuntime();
-  
+
+  window.base64ToArrayBuffer = (base64) => {
+    var binaryString = atob(base64);
+    var bytes = new Uint8Array(binaryString.length);
+    for (var i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+  }
+
+  window.repl_result = {}
+
   const main = async () => {
+    await init();
     // const buf = await readFile("../.build/wasm32-unknown-wasi/release/swiftwasm.wasm");
     const table = new WebAssembly.Table({ initial: 80000, element: 'anyfunc' });
     const memory = new WebAssembly.Memory({ initial: 500 });
 
     let buf = await fetch(runtimeurl).then(response => response.arrayBuffer());
     const runtimeInstantiation = await instantiateWASM(buf, {
-      repl,
       memory,
       __indirect_function_table: table,
     });
@@ -42,7 +53,6 @@
     const { wasi, instance, string, getMem } = await instantiateWASM(
       buf,
       {
-        repl,
         javascript_kit: swift.importObjects(),
         memory,
         __indirect_function_table: table,
@@ -93,63 +103,72 @@
 
     main_wasi = wasi;
 
-    buf = await fetch(replwasmurl).then(response => response.arrayBuffer());
+    // buf = await fetch(replwasmurl).then(response => response.arrayBuffer());
 
     // instance.exports.memory.grow(500)
     // let table = instance.exports.__indirect_function_table.grow(13000)
-    const replInstatiation = await instantiateWASM(
-      buf,
-      {
-        repl,
-        memory,
-        __indirect_function_table: table,
-        ...instance.exports,
-        ...runtimeInstantiation.instance.exports,
-        // __table_base: 35000,
-        _swift_FORCE_LOAD_$_swiftWASILibc: new WebAssembly.Global(
-          { value: 'i32', mutable: true },
-          0,
-        ),
-        __start_swift5_accessible_functions: new WebAssembly.Global(
-          { value: 'i32', mutable: true },
-          0,
-        ),
-        __stop_swift5_accessible_functions: new WebAssembly.Global(
-          { value: 'i32', mutable: true },
-          0,
-        ),
-        __start_swift5_replac2: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-        __stop_swift5_replac2: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-        __start_swift5_replace: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-        __stop_swift5_replace: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-        // __heap_base:  new WebAssembly.Global({ value: "i32", mutable: false }, 10_000_000),
-        // __memory_base: new WebAssembly.Global({ value: "i32", mutable: false }, 6_000_000)
-      },
-      false,
-    );
-    const repl_wasi = replInstatiation.wasi;
-    const repl_instance = replInstatiation.instance;
-    const repl_getMem = replInstatiation.getMem;
-    const repl_string = replInstatiation.string;
+
+
+    window.instatiateRepl = buf => {
+      const instantiation = instantiateWASM(
+        buf,
+        {
+          memory,
+          __indirect_function_table: table,
+          ...instance.exports,
+          ...runtimeInstantiation.instance.exports,
+          // __table_base: 35000,
+          _swift_FORCE_LOAD_$_swiftWASILibc: new WebAssembly.Global(
+            { value: 'i32', mutable: true },
+            0,
+          ),
+          __start_swift5_accessible_functions: new WebAssembly.Global(
+            { value: 'i32', mutable: true },
+            0,
+          ),
+          __stop_swift5_accessible_functions: new WebAssembly.Global(
+            { value: 'i32', mutable: true },
+            0,
+          ),
+          __start_swift5_replac2: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
+          __stop_swift5_replac2: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
+          __start_swift5_replace: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
+          __stop_swift5_replace: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
+          // __heap_base:  new WebAssembly.Global({ value: "i32", mutable: false }, 10_000_000),
+          // __memory_base: new WebAssembly.Global({ value: "i32", mutable: false }, 6_000_000)
+        },
+        false,
+        false, 
+        true
+      );
+      instantiation.instance.exports.__wasm_apply_data_relocs();
+      instantiation.instance.exports.__wasm_call_ctors();
+      return instantiation
+    }
+    // const replInstatiation = window.instatiateRepl(buf)
+    // const repl_wasi = replInstatiation.wasi;
+    // const repl_instance = replInstatiation.instance;
+    // const repl_getMem = replInstatiation.getMem;
+    // const repl_string = replInstatiation.string;
+
+    // function repl(a1, a2, a3, a4, a5) {
+    //   let result = repl_instance.exports.repl(a1, a2, a3, a4, a5);
+
+    //   const stdout = repl_wasi.getStdoutString();
+    //   if (stdout) console.log(stdout);
+    //   const stderr = repl_wasi.getStderrString();
+    //   if (stderr) console.error(stderr);
+    // }
+
     console.log('performing __wasm_apply_data_relocs');
-    repl_instance.exports.__wasm_apply_data_relocs();
-    repl_instance.exports.__wasm_call_ctors();
+
 
     runtimeInstantiation.instance.exports.__wasm_call_ctors();
 
     instance.exports.__wasm_apply_data_relocs();
     instance.exports.__wasm_call_ctors();
 
-    function repl(a1, a2, a3, a4, a5) {
-      let result = repl_instance.exports.repl(a1, a2, a3, a4, a5);
 
-      const stdout = repl_wasi.getStdoutString();
-      if (stdout) console.log(stdout);
-      const stderr = repl_wasi.getStderrString();
-      if (stderr) console.error(stderr);
-    }
-
-    window.repl = repl_instance.exports.repl;
     window.repl_wasi = runtimeInstantiation.wasi;
     window.repl_JsString = runtimeInstantiation.JsString;
 

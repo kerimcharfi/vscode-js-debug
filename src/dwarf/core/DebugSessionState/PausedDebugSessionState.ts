@@ -349,7 +349,7 @@ export function generateSwiftStackFrameCode2(vars){
   import JavaScriptKit
 
   @_cdecl("repl")
-  func repl(${args.join(", ")}) -> UnsafePointer<UInt8> {
+  func repl(${args.join(", ")}) -> UnsafeMutableRawPointer {
 
     ${pointerDeref}
     let variables = [

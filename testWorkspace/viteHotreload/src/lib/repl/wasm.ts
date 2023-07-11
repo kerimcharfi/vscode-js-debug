@@ -1,5 +1,6 @@
 // import { init, WASI } from '@wasmer/wasi'
 import { init, WASI } from '/home/ubu/coding/repos/wasmer-js/dist/Library.esm.js'
+export { init } from '/home/ubu/coding/repos/wasmer-js/dist/Library.esm.js'
 import { WasmFs } from "@wasmer/wasmfs"
 import { Buffer } from 'buffer';
 
@@ -43,9 +44,18 @@ function nullTerminatedSubarray(array: Uint8Array, begin=0){
 }
 
 
-export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true, force = true){
-    await init();
-    function link(moduleImports, symbols){
+export interface Options{
+
+}
+
+
+export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, synchronous = false){
+    // if(synchronous)
+    //     await init();
+
+    function link(module, symbols){
+        const moduleImports = WebAssembly.Module.imports(module)
+
         let linked_fns = {}
         for(let wasm_import of moduleImports){
             if(!linked_fns[wasm_import.module]){
@@ -98,21 +108,14 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true, force
         },
     });
 
-    console.log("compiling swift wasm")
-    const module = await WebAssembly.compile(new Uint8Array(swiftbuf));
-    console.log("finished compiling swift wasm")
-
-    // let ocmem = oc.HEAPU8;
-
     function getMem(){
         if(swiftmem.byteLength === 0){
             // detached
             if(instance.exports.memory){
                 swiftmem = new Uint8Array(instance.exports.memory.buffer)
             } else {
-                swiftmem = new Uint8Array(linked_fns.env.memory.buffer)
+                swiftmem = new Uint8Array(imports.env.memory.buffer)
             }
-        
         }
         return swiftmem
     }
@@ -153,35 +156,8 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true, force
         return new TextDecoder().decode(data);
     }
 
-    let imports = wasi.getImports(module);
-
     function _debugger(){
         debugger;
-    }
-
-    let linked_fns = link(WebAssembly.Module.imports(module), {
-        consolelog,
-        debugger: _debugger,
-        ...fns
-    })
-
-    imports = mergeDeep(imports, linked_fns)
-    console.log(imports)
-
-
-    let instance = await WebAssembly.instantiate(module, imports)
-    // {
-
-    //     ...imports,
-    //     ...linked_fns
-    // }
-    // );
-    // if(!instance.exports.memory){
-    //     instance.exports.memory = fns.memory
-    // }
-
-    if(wasiInstantiate){
-        instance = await wasi.instantiate(instance, imports);
     }
 
     function SwiftString (str) {
@@ -197,28 +173,72 @@ export async function instantiateWASM(swiftbuf, fns, wasiInstantiate=true, force
         return ptr
     }
 
-    // Instantiate the WebAssembly file
-    // await WebAssembly.instantiate(wasmBinary, {
-    //   wasi_snapshot_preview1: wasi.wasiImport,
-    //   env: {
-    //     add: (lhs, rhs) => (lhs + rhs),
-    //   }
-    // });
-    // const swiftmem = fns.memory
+    let module 
+    let instance 
     let swiftmem
-    if(instance.exports.memory){
-        swiftmem = new Uint8Array(instance.exports.memory.buffer)
-    } else {
-        swiftmem = new Uint8Array(linked_fns.memory)
+    let imports
+
+
+    if(synchronous){
+        console.log("creating WebAssembly.Module")
+        module = new WebAssembly.Module(new Uint8Array(buf));
+
+        let wasiImports = wasi.getImports(module);
+        imports = link(module, {
+            consolelog,
+            debugger: _debugger,
+            ...fns,
+            ...wasiImports
+        })
+        console.log(imports)
+
+        instance = new WebAssembly.Instance(module, imports)
+        console.log("finished creating WebAssembly.Module")
+
+        if(instance.exports.memory){
+            swiftmem = new Uint8Array(instance.exports.memory.buffer)
+        } else {
+            swiftmem = new Uint8Array(imports.memory)
+        }
+    
+        // let cppmem = hello_cpp.HEAPU8;
+    
+        // hello_cpp._copyOut = (sourcePtr, targetPtr, size)=>{
+        //     swiftmem.set(cppmem.subarray(sourcePtr, sourcePtr+size), targetPtr);
+        // }
+    
+        return {
+            wasi, instance, string: SwiftString, JsString, getMem
+        }
     }
+    else {
+        return (async()=> {
+            module = await WebAssembly.compile(new Uint8Array(buf));
 
-    // let cppmem = hello_cpp.HEAPU8;
+            let wasiImports = wasi.getImports(module);
+            imports = link(module, {
+                consolelog,
+                debugger: _debugger,
+                ...fns,
+                ...wasiImports
+            })
+            // let imports = mergeDeep(imports, linked_fns)
+            console.log(imports)
 
-    // hello_cpp._copyOut = (sourcePtr, targetPtr, size)=>{
-    //     swiftmem.set(cppmem.subarray(sourcePtr, sourcePtr+size), targetPtr);
-    // }
+            instance = await WebAssembly.instantiate(module, imports)
+            if(wasiInstantiate){
+                instance = await wasi.instantiate(instance, imports);
+            }
 
-    return {
-        wasi, instance, string: SwiftString, JsString, getMem
+            if(instance.exports.memory){
+                swiftmem = new Uint8Array(instance.exports.memory.buffer)
+            } else {
+                swiftmem = new Uint8Array(imports.memory)
+            }
+        
+            return {
+                wasi, instance, string: SwiftString, JsString, getMem
+            }
+        })()
     }
 }

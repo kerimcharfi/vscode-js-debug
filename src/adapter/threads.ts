@@ -50,7 +50,7 @@ import {
 } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 
 import { exec } from 'child_process';
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { sourceMapParseFailed } from '../dap/errors';
 import {
   DwarfSourceMap,
@@ -1060,7 +1060,7 @@ export class Thread implements IVariableStoreLocationProvider {
     let swiftReplCode = generateSwiftStackFrameCode2(frame.locals)
     writeFileSync(".repl/repl_13421.swift", swiftReplCode)
     exec(
-      '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi .repl/repl_13421.swift  -o /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test2.wasm -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/repl/.build/debug -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug/_CJavaScriptKit.build -L /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=6000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__wasm_call_ctors -Xlinker --export=repl -Xlinker --table-base=35000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --export-dynamic',
+      '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi .repl/repl_13421.swift  -o .repl/repl_13421.wasm -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/repl/.build/debug -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug/_CJavaScriptKit.build -L /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=25000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__wasm_call_ctors -Xlinker --export=repl -Xlinker --table-base=30000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --export-dynamic',
       // '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi .repl/repl_13421.swift -o /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test2.wasm -I /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug -L /home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/swift/.build/debug -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=6000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=repl -Xlinker --table-base=35000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --shared',
       (error, stdout, stderr) => {
         if (error) {
@@ -1072,6 +1072,8 @@ export class Thread implements IVariableStoreLocationProvider {
         console.log(`stdout: ${stdout}`)
       },
     )
+    var data = readFileSync('.repl/repl_13421.wasm', {encoding: 'base64'});
+
     console.timeEnd("compiling repl code")
 
     const args = []
@@ -1083,34 +1085,45 @@ export class Thread implements IVariableStoreLocationProvider {
     }
     console.time("evaluateOnCallFrame")
 
-    let evalResult = (await this.cdp.Debugger.evaluateOnCallFrame({
+    let replExecution = await this.cdp.Debugger.evaluateOnCallFrame({
       callFrameId: frame?.callFrame.callFrameId,
       expression: `
-      let result = "[]"
-      try{
-        let ptr = window.repl(${args.join(", ")})
-        // const stdout = window.repl_wasi.getStdoutString()
-        // if(stdout)
-        //   console.log(stdout);
-        // const stderr = window.repl_wasi.getStderrString();
-        // if(stderr)
-        //   console.error(stderr);
-        result = window.repl_JsString(ptr)
-        //let result = JSON.parse(resultStr)
-        console.log(result)
-      } catch (e) {
-        console.error(e)
-      }
-      result
+        const wasmB64 = '${data}'
+        console.log("executing command")
+        let result = "[]"
+        try{
+          let buf = window.base64ToArrayBuffer(wasmB64)
+          const {instance} = window.instatiateRepl(buf)
+
+          let ptr = instance.exports.repl(${args.join(", ")})
+          // const stdout = window.repl_wasi.getStdoutString()
+          // if(stdout)
+          //   console.log(stdout);
+          // const stderr = window.repl_wasi.getStderrString();
+          // if(stderr)
+          //   console.error(stderr);
+          result = window.repl_JsString(ptr)
+          //let result = JSON.parse(resultStr)
+          console.log(result)
+        } catch (e) {
+          console.error(e)
+        }
+        result
       `,
       returnByValue: true,
-    }))?.result?.value;
+    });
+
+    let evalResult = replExecution?.result?.value;
 
     console.timeEnd("evaluateOnCallFrame")
 
     let vars = []
     if(evalResult){
-      vars = JSON.parse(evalResult)
+      try{
+        vars = JSON.parse(evalResult)
+      } catch(e) {
+        console.error(e)
+      }
     }
     for(let variable of vars){
       let local = pausedDetails.stackTrace.frames[0].locals.find(local => local.name ==  variable.name)
