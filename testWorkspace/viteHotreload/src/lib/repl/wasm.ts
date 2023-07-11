@@ -8,30 +8,18 @@ try{
     if(window){
         // @ts-ignore
         window.Buffer = Buffer;
+        // @ts-ignore
+        window.base64ToArrayBuffer = (base64) => {
+            var binaryString = atob(base64);
+            var bytes = new Uint8Array(binaryString.length);
+            for (var i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+          }
      }
 } catch(e){
     console.log(e)
-}
-
-function isObject(item) {
-    return (item && typeof item === 'object' && !Array.isArray(item));
-}
-  
-function mergeDeep(target, source) {
-    let output = Object.assign({}, target);
-    if (isObject(target) && isObject(source)) {
-      Object.keys(source).forEach(key => {
-        if (isObject(source[key])) {
-          if (!(key in target))
-            Object.assign(output, { [key]: source[key] });
-          else
-            output[key] = mergeDeep(target[key], source[key]);
-        } else {
-          Object.assign(output, { [key]: source[key] });
-        }
-      });
-    }
-    return output;
 }
 
 function nullTerminatedSubarray(array: Uint8Array, begin=0){
@@ -43,16 +31,7 @@ function nullTerminatedSubarray(array: Uint8Array, begin=0){
     return array
 }
 
-
-export interface Options{
-
-}
-
-
 export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, synchronous = false){
-    // if(synchronous)
-    //     await init();
-
     function link(module, symbols){
         const moduleImports = WebAssembly.Module.imports(module)
 
@@ -109,7 +88,7 @@ export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, sy
     });
 
     function getMem(){
-        if(swiftmem.byteLength === 0){
+        if(!swiftmem?.byteLength){
             // detached
             if(instance.exports.memory){
                 swiftmem = new Uint8Array(instance.exports.memory.buffer)
@@ -164,12 +143,9 @@ export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, sy
         var encoder = new TextEncoder()
         var encodedString = encoder.encode(str)
         let ptr = instance.exports.malloc(encodedString.length + 1)
-        if (swiftmem.byteLength === 0) {
-          // detached
-          swiftmem = new Uint8Array(instance.exports.memory.buffer)
-        }
-        swiftmem.set(encodedString, ptr)
-        swiftmem.set([0], ptr+encodedString.length)
+        const mem = getMem()
+        mem.set(encodedString, ptr)
+        mem.set([0], ptr+encodedString.length)
         return ptr
     }
 
@@ -180,7 +156,6 @@ export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, sy
 
 
     if(synchronous){
-        console.log("creating WebAssembly.Module")
         module = new WebAssembly.Module(new Uint8Array(buf));
 
         let wasiImports = wasi.getImports(module);
@@ -190,17 +165,9 @@ export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, sy
             ...fns,
             ...wasiImports
         })
-        console.log(imports)
 
         instance = new WebAssembly.Instance(module, imports)
-        console.log("finished creating WebAssembly.Module")
 
-        if(instance.exports.memory){
-            swiftmem = new Uint8Array(instance.exports.memory.buffer)
-        } else {
-            swiftmem = new Uint8Array(imports.memory)
-        }
-    
         // let cppmem = hello_cpp.HEAPU8;
     
         // hello_cpp._copyOut = (sourcePtr, targetPtr, size)=>{
@@ -213,6 +180,8 @@ export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, sy
     }
     else {
         return (async()=> {
+            await init()
+
             module = await WebAssembly.compile(new Uint8Array(buf));
 
             let wasiImports = wasi.getImports(module);
@@ -222,18 +191,10 @@ export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, sy
                 ...fns,
                 ...wasiImports
             })
-            // let imports = mergeDeep(imports, linked_fns)
-            console.log(imports)
 
             instance = await WebAssembly.instantiate(module, imports)
             if(wasiInstantiate){
                 instance = await wasi.instantiate(instance, imports);
-            }
-
-            if(instance.exports.memory){
-                swiftmem = new Uint8Array(instance.exports.memory.buffer)
-            } else {
-                swiftmem = new Uint8Array(imports.memory)
             }
         
             return {

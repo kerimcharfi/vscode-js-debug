@@ -1,6 +1,7 @@
 <script>
   import { instantiateWASM, init } from './wasm';
   import { SwiftRuntime } from '/home/ubu/coding/repos/JavaScriptKit/Runtime/lib/index.mjs';
+  import { runtimeInit } from './runtime'
   // import STEP_FILE_TEXT from '@/assets/step-files/basic_nobends.step?raw';
   // import STEP_FILE_TEXT from "@/assets/step-files/assembly.step?raw"
   import runtimeurl from '.build/debug/repl.wasm?url';
@@ -12,44 +13,13 @@
   let main_wasi;
   const swift = new SwiftRuntime();
 
-  window.base64ToArrayBuffer = (base64) => {
-    var binaryString = atob(base64);
-    var bytes = new Uint8Array(binaryString.length);
-    for (var i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
-  }
-
   window.repl_result = {}
 
   const main = async () => {
-    await init();
-    // const buf = await readFile("../.build/wasm32-unknown-wasi/release/swiftwasm.wasm");
-    const table = new WebAssembly.Table({ initial: 80000, element: 'anyfunc' });
-    const memory = new WebAssembly.Memory({ initial: 500 });
+    const {runtimeInstantiation, memory, table} = await runtimeInit
 
-    let buf = await fetch(runtimeurl).then(response => response.arrayBuffer());
-    const runtimeInstantiation = await instantiateWASM(buf, {
-      memory,
-      __indirect_function_table: table,
-    });
+    let buf = await fetch(swiftwasmurl).then(response => response.arrayBuffer());
 
-    table.set(69999, runtimeInstantiation.instance.exports['$sSJ9isNewlineSbvg']);
-    table.set(69998, runtimeInstantiation.instance.exports['$sSR11baseAddressSPyxGSgvg']);
-    table.set(
-      69997,
-      runtimeInstantiation.instance.exports['$sSp10initialize4from5countySPyxG_SitF'],
-    );
-    table.set(69996, runtimeInstantiation.instance.exports['$sSr11baseAddressSpyxGSgvg']);
-    table.set(
-      69995,
-      runtimeInstantiation.instance.exports['$sSp14moveInitialize4from5countySpyxG_SitF'],
-    );
-    table.set(69994, runtimeInstantiation.instance.exports['swift_deletedMethodError']);
-    table.set(69993, runtimeInstantiation.instance.exports['__cxa_pure_virtual']);
-
-    buf = await fetch(swiftwasmurl).then(response => response.arrayBuffer());
     const { wasi, instance, string, getMem } = await instantiateWASM(
       buf,
       {
@@ -178,14 +148,12 @@
     let exitCode = 'none';
     console.log('running');
     instance.exports.foit(3);
-    // instance.exports._start();
 
     // setTimeout(() => {
     try {
       // foit(string("STEP_FILE_TEXT"))
       // repl_instance.exports.repl3(4)
       // instance.exports.foit(3);
-      // instance.exports._start();
       // repl_instance.exports.repl(234)
       // let ptr = window.repl(82196, 82120, 82116, 82104, 82096)
       // console.log("<----->")
@@ -197,19 +165,19 @@
       console.error(e);
     }
 
-    // let stdout = wasi.getStdoutString();
-    // let stderr = wasi.getStderrString();
+    let stdout = wasi.getStdoutString();
+    let stderr = wasi.getStderrString();
 
-    // // This should print "hello world (exit code: 0)"
-    // console.log(`${stdout}`);
-    // console.log(`${stderr}(exit code: ${exitCode})`);
+    // This should print "hello world (exit code: 0)"
+    console.log(`${stdout}`);
+    console.log(`${stderr}(exit code: ${exitCode})`);
 
-    // stdout = runtimeInstantiation.wasi.getStdoutString();
-    // stderr = runtimeInstantiation.wasi.getStderrString();
+    stdout = runtimeInstantiation.wasi.getStdoutString();
+    stderr = runtimeInstantiation.wasi.getStderrString();
 
-    // // This should print "hello world (exit code: 0)"
-    // console.log(`${stdout}`);
-    // console.log(`${stderr}(exit code: ${exitCode})`);
+    // This should print "hello world (exit code: 0)"
+    console.log(`${stdout}`);
+    console.log(`${stderr}(exit code: ${exitCode})`);
     // }, 0);
   };
 
