@@ -1,6 +1,6 @@
 
 import { instantiateWASM, init } from './wasm';
-import runtimeurl from '.build/debug/repl.wasm?url';
+import runtimeurl from '/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug/__runtime.wasm?url';
 
 
 const main = async () => {

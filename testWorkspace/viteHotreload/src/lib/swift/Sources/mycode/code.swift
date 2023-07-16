@@ -89,35 +89,8 @@ func foit(ptr: Int32){
     JavaScriptEventLoop.installGlobalExecutor()
 
     // alert("hello")
-
-    // customDump(atire)
-    // Task {
-    //     do {
-    //         print("task is")
-            
-    //         let response = try await fetch("https://httpbin.org/uuid").value
-    //         let json = try await JSPromise(response.json().object!)!.value
-    //         let parsedResponse = try JSValueDecoder().decode(Response.self, from: json)
-    //         alert(parsedResponse.uuid)
-    //         alert(json)
-    //     } catch {
-    //         print(error)
-    //     }
-    // }
-
+    
     print("----------------------- grooggi ----------------------")
-
-    // Task {
-    //     do {
-    //         // let response = try await fetch("https://httpbin.org/uuid").value
-    //         let response = fetch("https://httpbin.org/uuid")
-    //         // let json = try await JSPromise(response.json().object!)!.value
-    //         // let parsedResponse = try JSValueDecoder().decode(Response.self, from: json)
-    //         // alert(parsedResponse.uuid)
-    //     } catch {
-    //         print(error)
-    //     }
-    // }
 
     var asyncButtonElement = document.createElement("button")
 
@@ -146,8 +119,7 @@ func foit(ptr: Int32){
 
     _ = document.body.appendChild(asyncButtonElement)
 
-    print("runned")
-
+    print("sunner")
 
     // print(atire)
     // aobj.maxSpeed = 401
@@ -166,40 +138,8 @@ func foit(ptr: Int32){
     // // afunc()
 
     // anotherone()
-    // anotherone()
-    // anotherone()
-    // anotherone()
-    // anotherone()
-    // anotherone()
     // // afunc()
 }
-
-// func afunc() -> String{
-//     print("hello swifty")
-//     let mystr = "jeeloo"
-//     print(mystr)
-//     debugger()
-//     return mystr
-// }
-
-// var asyncButtonElement = document.createElement("button")
-// asyncButtonElement.innerText = "Fetch UUID demo"
-// asyncButtonElement.onclick = .object(JSClosure { _ in
-//     Task {
-//         do {
-//             let response = try await fetch("https://httpbin.org/uuid").value
-//             let json = try await JSPromise(response.json().object!)!.value
-//             let parsedResponse = try JSValueDecoder().decode(Response.self, from: json)
-//             alert(parsedResponse.uuid)
-//         } catch {
-//             print(error)
-//         }
-//     }
-
-//     return .undefined
-// })
-
-// _ = document.body.appendChild(asyncButtonElement)
 
 func afunc(_ ptr: Int32){
     let aobj = UnsafeMutablePointer<Tire>(bitPattern: Int(ptr))!.pointee

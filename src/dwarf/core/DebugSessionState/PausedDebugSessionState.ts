@@ -327,14 +327,13 @@ func repl(${args.join(", ")}) {
 }
 
 
-export function generateSwiftStackFrameCode2(vars){
+export function generateSwiftStackFrameCode2(vars, importDecl){
   let args = []
   let pointerDeref = ""
   let variableDumps = ""
 
-  for(const {name, type, value} of vars){
-    if(!value.address) continue
-
+  for(let {name, type, value} of vars){
+    name = name.replace("<", "_").replace(">", "_").replace("-", "_")
     args.push(`__${name}_ptr: UnsafeMutableRawPointer`)
 
     pointerDeref = pointerDeref + `let ${name} = __${name}_ptr.assumingMemoryBound(to: ${type}.self).pointee\n  `
@@ -343,10 +342,9 @@ export function generateSwiftStackFrameCode2(vars){
   }
 
   return `
-  import mycode
-  import imports
-  import repl_runtime
-  import JavaScriptKit
+  import runtime
+
+  ${importDecl}
 
   @_cdecl("repl")
   func repl(${args.join(", ")}) -> UnsafeMutableRawPointer {

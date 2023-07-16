@@ -31,6 +31,136 @@ function nullTerminatedSubarray(array: Uint8Array, begin=0){
     return array
 }
 
+export class Runtime {
+    modules = new Map<string, Module>
+    symbolByNameCache = new Map<string, any>()
+    symbolResolver: (r: Runtime)=>any
+    moduleDependecies = new Map<Module, Module[]>()
+    heapBase: number
+
+    /*
+
+    */
+    allocateModule(name: string, dataSize: number, tableSize: number){
+        // use malloc
+
+        const module = new Module()
+        module.isPlaceHolder
+        module.dataBase = 0 
+        module.dataEnd = 0 
+        module.tableBase = 0 
+        module.tableEnd = 0 
+
+        this.modules.set(name, module)
+        return {
+            dataBase: module.dataBase,
+            dataEnd: module.dataEnd,
+            tableBase: module.tableBase,
+            tableEnd: module.tableBase
+        }
+    }
+
+    /*
+        
+    */
+    reserveTableRange(base: number, end: number){
+        throw `table range: (${base} - ${end}) already in use`
+    }
+
+    reserveMemoryRange(base: number, end: number){
+        // use simple allocator for reserved memory between stack and heap
+        throw `memory range: (${base} - ${end}) already in use`
+    }
+
+    /*
+        returns true if module existed and freed
+    */
+    freeModule(name: string){
+        let module = this.modules.get(name)
+        if(!module)
+            return false
+        
+        
+        let removed = this.modules.delete(name)
+        
+        return removed
+    }
+
+    insertModule(name: string, module: Module){
+        let oldModule = this.modules.get(name)
+        if (!oldModule){
+            //TODO: check if module bounds are unused
+        }
+        if(oldModule){
+            if (module.dataEnd > oldModule.dataEnd || module.dataBase < oldModule.dataBase || module.tableBase < oldModule.tableBase || module.tableEnd > oldModule.tableEnd){
+                console.error("Module does not fit in allocated space! free, allocate and then setModule if module exists")
+                console.error(oldModule, Module)
+            }
+        }
+        this.modules.set(name, module)
+    }
+
+    findSymbol(moduleName: string, symbolName: string){
+        let sym
+        // use provided resolver
+        if(this.symbolResolver){
+            sym = this.symbolResolver(this)
+            if(sym)
+                return sym
+        }
+
+        // search in modules
+        let module = this.modules.get(moduleName)
+        if(module){
+            sym = module.instance.exports[symbolName]
+            if(sym)
+                return sym
+        }
+
+        //
+        return sym
+    }
+
+    addSymbols(newSymbols: {string: any}){
+        for(let [name, symbol] of Object.entries(newSymbols)){
+            this.symbolByNameCache.set(name, symbol)
+        }
+    }
+
+    removeSymbols(symbols){
+        for(let [name, symbol] of Object.entries(symbols)){
+            this.symbolByNameCache.delete(name)
+        }
+    }
+}
+
+export class Module {
+    isPlaceHolder = false
+
+    dataBase: number
+    dataEnd: number
+
+    tableBase: number
+    tableEnd: number
+
+    table: WebAssembly.Table
+    memory: WebAssembly.Memory
+    instance: WebAssembly.Instance
+    wasmModule: WebAssembly.Module
+
+    resolved_imports
+
+    static fromInstantiation(instantiation){
+        let module = new Module()
+        module.dataBase = instantiation.instance.exports.__global_base
+        module.dataEnd = instantiation.instance.exports.__data_end
+        module.tableBase = instantiation.instance.exports.__tableBase
+        module.tableEnd = instantiation.instance.exports.__tableEnd
+        module.instance = instantiation.instance
+        return module
+    }
+}
+
 export function instantiateWASM(buf, fns, wasiInstantiate=true, force = true, synchronous = false){
     function link(module, symbols){
         const moduleImports = WebAssembly.Module.imports(module)

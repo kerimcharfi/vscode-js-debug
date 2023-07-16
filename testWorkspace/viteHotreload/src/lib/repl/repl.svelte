@@ -1,10 +1,9 @@
 <script>
-  import { instantiateWASM, init } from './wasm';
+  import { runtimeInit } from './runtime';
+  import { Module, Runtime, instantiateWASM } from './wasm';
   import { SwiftRuntime } from '/home/ubu/coding/repos/JavaScriptKit/Runtime/lib/index.mjs';
-  import { runtimeInit } from './runtime'
   // import STEP_FILE_TEXT from '@/assets/step-files/basic_nobends.step?raw';
   // import STEP_FILE_TEXT from "@/assets/step-files/assembly.step?raw"
-  import runtimeurl from '.build/debug/repl.wasm?url';
   // import runtimeurl from '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/repl/Sources/repl_runtime/repl_runtime.wasm?url';
   // import swiftwasmurl from '../swift/.build/debug/mycode.wasm?url';
   import swiftwasmurl from '../swift/.build/debug/swiftwasm.wasm?url';
@@ -12,11 +11,13 @@
 
   let main_wasi;
   const swift = new SwiftRuntime();
-
-  window.repl_result = {}
+  let wasmRuntime = new Runtime();
 
   const main = async () => {
-    const {runtimeInstantiation, memory, table} = await runtimeInit
+    const { runtimeInstantiation, memory, table } = await runtimeInit;
+
+    const swiftRuntimeModule = Module.fromInstantiation(runtimeInstantiation);
+    wasmRuntime.insertModule('swiftRuntime', swiftRuntimeModule);
 
     let buf = await fetch(swiftwasmurl).then(response => response.arrayBuffer());
 
@@ -72,12 +73,13 @@
     );
 
     main_wasi = wasi;
+    const codeModule = Module.fromInstantiation({ instance });
+    wasmRuntime.insertModule('code', codeModule);
 
     // buf = await fetch(replwasmurl).then(response => response.arrayBuffer());
 
     // instance.exports.memory.grow(500)
     // let table = instance.exports.__indirect_function_table.grow(13000)
-
 
     window.instatiateRepl = buf => {
       const instantiation = instantiateWASM(
@@ -104,17 +106,15 @@
           __stop_swift5_replac2: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
           __start_swift5_replace: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
           __stop_swift5_replace: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-          // __heap_base:  new WebAssembly.Global({ value: "i32", mutable: false }, 10_000_000),
-          // __memory_base: new WebAssembly.Global({ value: "i32", mutable: false }, 6_000_000)
         },
         false,
-        false, 
-        true
+        false,
+        true,
       );
       instantiation.instance.exports.__wasm_apply_data_relocs();
       instantiation.instance.exports.__wasm_call_ctors();
-      return instantiation
-    }
+      return instantiation;
+    };
     // const replInstatiation = window.instatiateRepl(buf)
     // const repl_wasi = replInstatiation.wasi;
     // const repl_instance = replInstatiation.instance;
@@ -132,12 +132,10 @@
 
     console.log('performing __wasm_apply_data_relocs');
 
-
     runtimeInstantiation.instance.exports.__wasm_call_ctors();
 
     instance.exports.__wasm_apply_data_relocs();
     instance.exports.__wasm_call_ctors();
-
 
     window.repl_wasi = runtimeInstantiation.wasi;
     window.repl_JsString = runtimeInstantiation.JsString;

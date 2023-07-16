@@ -8,7 +8,8 @@
             "type": "chrome",
             "request": "launch",
             "name": "Launch Chrome against localhost",
-            "url": "http://localhost:5173/",
+            "url": "http://localhost:5173/swift",
+            "runtimeExecutable": "/usr/bin/google-chrome-beta",
             "webRoot": "${workspaceFolder}/viteHotreload"
         },
         {
@@ -58,6 +59,30 @@
             "args": [],
             "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/repl",
             "preLaunchTask": "swift: Build Release repl (viteHotreload/src/lib/repl)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Debug mycode (viteHotreload/src/lib/swift)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift/.build/debug/mycode",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift",
+            "preLaunchTask": "swift: Build Debug mycode (viteHotreload/src/lib/swift)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Release mycode (viteHotreload/src/lib/swift)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift/.build/release/mycode",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift",
+            "preLaunchTask": "swift: Build Release mycode (viteHotreload/src/lib/swift)"
         }
     ]
 }

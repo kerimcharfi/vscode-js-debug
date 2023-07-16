@@ -10,7 +10,7 @@ console.log('Rebuilding Swift')
 
 process.chdir(path.join(__dirname, 'src/lib/swift'))
 exec(
-  '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swift build --triple wasm32-unknown-wasi -Xlinker --export=__wasm_call_ctors -Xlinker --export=foit -Xlinker --global-base=1024 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export-dynamic -Xlinker --unresolved-symbols=import-dynamic',
+  '/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swift build --triple wasm32-unknown-wasi -Xlinker --export=__global_base -Xlinker --export=__data_end  -Xlinker --export=__wasm_call_ctors -Xlinker --export=foit -Xlinker --global-base=1024 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export-dynamic -Xlinker --unresolved-symbols=import-dynamic',
   (error, stdout, stderr) => {
     if (error) {
       console.log(`error: ${error.message}`)
