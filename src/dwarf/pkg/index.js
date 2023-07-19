@@ -591,13 +591,13 @@ class WasmLineInfo {
         wasm.__wbg_set_wasmlineinfo_column(this.ptr, !isLikeNone(arg0), isLikeNone(arg0) ? 0 : arg0);
     }
     /**
-    * @param {string} filepath
+    * @param {string} file_path
     * @param {number | undefined} line
     * @param {number | undefined} column
     * @returns {WasmLineInfo}
     */
-    static new(filepath, line, column) {
-        var ptr0 = passStringToWasm0(filepath, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    static new(file_path, line, column) {
+        var ptr0 = passStringToWasm0(file_path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len0 = WASM_VECTOR_LEN;
         var ret = wasm.wasmlineinfo_new(ptr0, len0, !isLikeNone(line), isLikeNone(line) ? 0 : line, !isLikeNone(column), isLikeNone(column) ? 0 : column);
         return WasmLineInfo.__wrap(ret);

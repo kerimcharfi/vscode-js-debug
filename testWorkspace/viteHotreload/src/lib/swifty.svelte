@@ -1,28 +1,25 @@
 <script>
-  import { runtimeInit } from './runtime';
-  import { Module, Runtime, instantiateWASM } from './wasm';
+  import { runtimeInit } from '/home/ubu/coding/repos/wasm-js-runtime/swift/runtime';
+  import { Module, Runtime, instantiateWASM } from '/home/ubu/coding/repos/wasm-js-runtime/wasm';
   import { SwiftRuntime } from '/home/ubu/coding/repos/JavaScriptKit/Runtime/lib/index.mjs';
   // import STEP_FILE_TEXT from '@/assets/step-files/basic_nobends.step?raw';
   // import STEP_FILE_TEXT from "@/assets/step-files/assembly.step?raw"
   // import runtimeurl from '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/repl/Sources/repl_runtime/repl_runtime.wasm?url';
   // import swiftwasmurl from '../swift/.build/debug/mycode.wasm?url';
-  import swiftwasmurl from '../swift/.build/debug/swiftwasm.wasm?url';
+  import swiftwasmurl from './swift/.build/debug/swiftwasm.wasm?url';
   // import replwasmurl from '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/test2.wasm?url';
+  import runtimeurl from '/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug/__runtime.wasm?url';
 
   let main_wasi;
   const swift = new SwiftRuntime();
-  let wasmRuntime = new Runtime();
 
   const main = async () => {
-    const { runtimeInstantiation, memory, table } = await runtimeInit;
-
-    const swiftRuntimeModule = Module.fromInstantiation(runtimeInstantiation);
-    wasmRuntime.insertModule('swiftRuntime', swiftRuntimeModule);
-
-    let buf = await fetch(swiftwasmurl).then(response => response.arrayBuffer());
-
+    const { runtimeInstantiation, memory, table, runtime } = await runtimeInit(
+      await fetch(runtimeurl).then(response => response.arrayBuffer())
+    );
+    
     const { wasi, instance, string, getMem } = await instantiateWASM(
-      buf,
+      await fetch(swiftwasmurl).then(response => response.arrayBuffer()),
       {
         javascript_kit: swift.importObjects(),
         memory,
@@ -73,72 +70,10 @@
     );
 
     main_wasi = wasi;
-    const codeModule = Module.fromInstantiation({ instance });
-    wasmRuntime.insertModule('code', codeModule);
 
-    // buf = await fetch(replwasmurl).then(response => response.arrayBuffer());
+    Module.fromInstantiation({ instance })
+          .insertIntoRuntime(runtime, 'code');
 
-    // instance.exports.memory.grow(500)
-    // let table = instance.exports.__indirect_function_table.grow(13000)
-
-    window.instatiateRepl = buf => {
-      const instantiation = instantiateWASM(
-        buf,
-        {
-          memory,
-          __indirect_function_table: table,
-          ...instance.exports,
-          ...runtimeInstantiation.instance.exports,
-          // __table_base: 35000,
-          _swift_FORCE_LOAD_$_swiftWASILibc: new WebAssembly.Global(
-            { value: 'i32', mutable: true },
-            0,
-          ),
-          __start_swift5_accessible_functions: new WebAssembly.Global(
-            { value: 'i32', mutable: true },
-            0,
-          ),
-          __stop_swift5_accessible_functions: new WebAssembly.Global(
-            { value: 'i32', mutable: true },
-            0,
-          ),
-          __start_swift5_replac2: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-          __stop_swift5_replac2: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-          __start_swift5_replace: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-          __stop_swift5_replace: new WebAssembly.Global({ value: 'i32', mutable: true }, 0),
-        },
-        false,
-        false,
-        true,
-      );
-      instantiation.instance.exports.__wasm_apply_data_relocs();
-      instantiation.instance.exports.__wasm_call_ctors();
-      return instantiation;
-    };
-    // const replInstatiation = window.instatiateRepl(buf)
-    // const repl_wasi = replInstatiation.wasi;
-    // const repl_instance = replInstatiation.instance;
-    // const repl_getMem = replInstatiation.getMem;
-    // const repl_string = replInstatiation.string;
-
-    // function repl(a1, a2, a3, a4, a5) {
-    //   let result = repl_instance.exports.repl(a1, a2, a3, a4, a5);
-
-    //   const stdout = repl_wasi.getStdoutString();
-    //   if (stdout) console.log(stdout);
-    //   const stderr = repl_wasi.getStderrString();
-    //   if (stderr) console.error(stderr);
-    // }
-
-    console.log('performing __wasm_apply_data_relocs');
-
-    runtimeInstantiation.instance.exports.__wasm_call_ctors();
-
-    instance.exports.__wasm_apply_data_relocs();
-    instance.exports.__wasm_call_ctors();
-
-    window.repl_wasi = runtimeInstantiation.wasi;
-    window.repl_JsString = runtimeInstantiation.JsString;
 
     swift._instance = instance;
     swift.setMemory(memory);
@@ -181,7 +116,7 @@
 
   main();
 </script>
-
+Swift
 <button
   on:click={() => {
     let stdout = main_wasi.getStdoutString();

@@ -2,8 +2,8 @@
   import svelteLogo from './assets/svelte.svg'
   import viteLogo from '/vite.svg'
   import Counter from './lib/Counter.svelte'
-  import Swift from './lib/swift/swift.svelte'
-  import Repl from './lib/repl/repl.svelte'
+  import Swifty from './lib/swifty.svelte'
+  // import Repl from './lib/repl/repl.svelte'
 
   let showSwift = false;
 </script>
@@ -32,7 +32,8 @@
   {/if} -->
 
   <!-- <Swift/> -->
-  <Repl/>
+  <!-- <Repl/> -->
+  <Swifty />
   <button on:click={()=>showSwift=true}>
     click
   </button>

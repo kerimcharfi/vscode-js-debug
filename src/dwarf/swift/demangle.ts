@@ -76,14 +76,12 @@ async function instantiateWASM (swiftbuf) {
 const setupPromise = instantiateWASM(buf)
 
 export async function demangle(name){
-  if(name.charAt(0) !== '$' || name.charAt(1) !== '$'){
-    return name
+  if(name.charAt(0) === '$' && name.charAt(1) === '$'){
+    name = name.substring(1);
   }
-  name = name.substring(1);
 
   const { wasi, instance, string } = await setupPromise
 
-  let exitCode = 'err'
   try {
     instance.exports.demangle(string(name))
   } catch (e) {
@@ -92,7 +90,13 @@ export async function demangle(name){
   let stdout = wasi.getStdoutString()
   let stderr = wasi.getStderrString()
 
-  console.log(`${stdout}`)
-  console.log(`${stderr}(exit code: ${exitCode})`)
+  if(stderr){
+    console.log(stdout)
+    console.error(stderr)
+  }
+
+  if(stdout.at(-1) == "\n")
+    stdout = stdout.substring(0, stdout.length-1)
+
   return stdout
 }

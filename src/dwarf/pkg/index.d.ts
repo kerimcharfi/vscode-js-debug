@@ -138,12 +138,12 @@ export class VariableVector {
 export class WasmLineInfo {
   free(): void;
 /**
-* @param {string} filepath
+* @param {string} file_path
 * @param {number | undefined} line
 * @param {number | undefined} column
 * @returns {WasmLineInfo}
 */
-  static new(filepath: string, line?: number, column?: number): WasmLineInfo;
+  static new(file_path: string, line?: number, column?: number): WasmLineInfo;
 /**
 * @returns {string}
 */

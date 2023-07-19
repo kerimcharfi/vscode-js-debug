@@ -85,7 +85,7 @@ func foit(ptr: Int32){
     // print(234)
     // print(useless)
     var address = withUnsafeMutablePointer(to: &aobj) {i32($0)}
-
+    print("address is: \(address)")
     JavaScriptEventLoop.installGlobalExecutor()
 
     // alert("hello")
@@ -95,23 +95,23 @@ func foit(ptr: Int32){
     var asyncButtonElement = document.createElement("button")
 
     var closure = JSClosure { _ in
-            Task {
-                do {
-                    let response = try await fetch("https://httpbin.org/uuid").value
-                    let json = try await JSPromise(response.json().object!)!.value
-                    JSObject.global.console.log("hello")
-                    let jsonstring = JSON.stringify(json)
-                    // let parsedResponse = try JSValueDecoder().decode(Response.self, from: json)
-                    alert(jsonstring)
-                    print(jsonstring)
-                    JSObject.global.console.log(String(describing: type(of: jsonstring)))
+        Task {
+            do {
+                let response = try await fetch("https://httpbin.org/uuid").value
+                let json = try await JSPromise(response.json().object!)!.value
+                JSObject.global.console.log("hello")
+                let jsonstring = JSON.stringify(json)
+                // let parsedResponse = try JSValueDecoder().decode(Response.self, from: json)
+                alert(jsonstring)
+                print(jsonstring)
+                JSObject.global.console.log(String(describing: type(of: jsonstring)))
 
-                } catch {
-                    print(error)
-                }
+            } catch {
+                print(error)
             }
+        }
 
-            return .undefined
+        return .undefined
     }
 
     asyncButtonElement.innerText = "Fetch UUID demo"

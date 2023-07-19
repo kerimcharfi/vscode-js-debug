@@ -169,6 +169,8 @@ interface IInstrumentationPauseAuxData {
   sourceMapURL: string;
 }
 
+// TODO: refactor DebugSession! especially getVariablelistFromAddress is picking random (now latest) dwarf containers
+// TODO: free / destroy old dwarf containers
 export class DebugSession {
   sources: WebAssemblyFile[];
 
@@ -208,8 +210,10 @@ export class DebugSession {
     return undefined;
   }
 
-  getVariablelistFromAddress(address: number) {
-    for (const x of this.sources) {
+  getVariablelistFromAddress(address: number, scriptId: string) {
+    let sources = this.sources.filter(source=>source.scriptID===scriptId)
+    // sources.reverse()
+    for (const x of sources) {
       const list = x.dwarf.variable_name_list(address);
 
       if (list && list.size() > 0) {
@@ -1024,7 +1028,7 @@ export class Thread implements IVariableStoreLocationProvider {
       //   });
       // }
 
-      const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.callFrame.location.columnNumber!)
+      const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.callFrame.location.columnNumber!, frame.callFrame.location.scriptId)
       // frame.frame.locals = frame.locals
       // frame.frame.scopeChain.forEach(scope => scope.locals = frame.locals)
 
@@ -1035,6 +1039,8 @@ export class Thread implements IVariableStoreLocationProvider {
       if (varlist) {
         for (let i = 0; i < varlist.size(); i++)
         {
+
+          try{
             const name = varlist.at_name(i);
             const displayName = varlist.at_display_name(i);
             const type = varlist.at_type_name(i);
@@ -1044,15 +1050,25 @@ export class Thread implements IVariableStoreLocationProvider {
             let local = {
               name, displayName, type, groupId, childGroupId, value: undefined
             }
-            try{
+
               local.value = await dwarfSessionState.dumpVariable(frame, displayName)
 
               frame.locals.push(local)
             } catch (e) {
-              console.log("unable to dump variable: " + name)
+              console.log("unable to dump variable")
             }
-
         }
+
+        // hacky way to unify weird splitted types. Occurs e.g. with collection like let a = [1,2,3] . TODO: investiage reason in rust dwarf pkg
+        for(let local of frame.locals){
+          if(local.type == "<no-type-name>"){
+            let child = frame.locals.find(childLocal=>local.childGroupId === childLocal.groupId)
+            local.type = await demangle(child.type)
+          }
+        }
+
+        frame.locals = frame.locals.filter(local => local.name != '<unnamed>' && local.value?.address && local.type != "<no-type-name>" && !local.type.includes("$"))
+
       }
     })
 
@@ -1062,23 +1078,27 @@ export class Thread implements IVariableStoreLocationProvider {
 
     let INCLUDE_DIRS = [
       '/home/ubu/coding/codecad/examples/svelte-dev-app/src/swift/.build/debug',
-      '/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug',
-      '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug'
+      // '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug',
+
+      '/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug'
     ].reduce((res, include) => res + " -I " + include, "")
 
     const IMPORTS = `
     //import mycode
     import swiftwasm
-    import JavaScriptKit
+    // import oc
+    //import JavaScriptKit
     `
 
     // let INCLUDE_DIR = '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug'
-    if(frame.locals?.length){
+    repl: if(frame.locals?.length){
       console.time("repl")
       console.time("compiling repl code")
-      let swiftVars = frame.locals.filter(({name, type, value})=>value?.address && type != "<no-type-name>" && !type.includes("$"))
+      let swiftVars = frame.locals
       let swiftReplCode = generateSwiftStackFrameCode2(swiftVars, IMPORTS)
       writeFileSync(".repl/repl_temp.swift", swiftReplCode)
+      let deferred = getDeferred()
+
       exec(
         `/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi .repl/repl_temp.swift  -o .repl/repl_temp.wasm ${INCLUDE_DIRS} -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=25000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__wasm_call_ctors -Xlinker --export=repl -Xlinker --table-base=30000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --export-dynamic`,
         (error, stdout, stderr) => {
@@ -1089,8 +1109,14 @@ export class Thread implements IVariableStoreLocationProvider {
             console.log(`stderr: ${stderr}`)
           }
           console.log(`stdout: ${stdout}`)
+          deferred.resolve(error)
         },
       )
+
+      let error = await deferred.promise
+      if(error)
+        break repl // continues after the repl: block
+
       var replWasmB64 = readFileSync('.repl/repl_temp.wasm', {encoding: 'base64'});
 
       console.timeEnd("compiling repl code")
@@ -1108,11 +1134,10 @@ export class Thread implements IVariableStoreLocationProvider {
         callFrameId: frame?.callFrame.callFrameId,
         expression: `
           const wasmB64 = '${replWasmB64}'
-          console.log("executing command")
           let result = "[]"
           try{
             let buf = window.base64ToArrayBuffer(wasmB64)
-            const {instance} = window.instatiateRepl(buf)
+            const {instance, JsString} = window.instatiateRepl(buf)
 
             let ptr = instance.exports.repl(${args.join(", ")})
             // const stdout = window.repl_wasi.getStdoutString()
@@ -1121,9 +1146,9 @@ export class Thread implements IVariableStoreLocationProvider {
             // const stderr = window.repl_wasi.getStderrString();
             // if(stderr)
             //   console.error(stderr);
-            result = window.repl_JsString(ptr)
+            result = JsString(ptr)
             //let result = JSON.parse(resultStr)
-            console.log(result)
+            //console.log(result)
           } catch (e) {
             console.error(e)
           }
@@ -1146,7 +1171,8 @@ export class Thread implements IVariableStoreLocationProvider {
       }
       for(let variable of vars){
         let local = pausedDetails.stackTrace.frames[0].locals.find(local => local.name ==  variable.name)
-        local.value = variable.value
+        if(local)
+          local.value = variable.value
       }
       console.timeEnd("repl")
     }
