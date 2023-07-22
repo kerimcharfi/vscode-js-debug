@@ -152,6 +152,9 @@ export interface IBaseConfiguration extends IMandatedConfiguration {
    */
   enableContentValidation: boolean;
 
+  swiftReplImportDeclaration: string[];
+  swiftReplIncludePaths: string[]
+
   /**
    * A list of debug sessions which, when this debug session is terminated,
    * will also be stopped.

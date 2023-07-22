@@ -33,7 +33,7 @@ import { BreakpointManager, EntryBreakpointMode, IPossibleBreakLocation } from '
 import { UserDefinedBreakpoint } from './breakpoints/userDefinedBreakpoint';
 import { ICompletions } from './completions';
 import { ExceptionMessage, IConsole, QueryObjectsMessage } from './console';
-import { CustomBreakpointId, customBreakpoints } from './customBreakpoints';
+import { customBreakpoints } from './customBreakpoints';
 import { IEvaluator } from './evaluator';
 import { IExceptionPauseService } from './exceptionPauseService';
 import * as objectPreview from './objectPreview';
@@ -46,10 +46,11 @@ import {
 
 import {
   PausedDebugSessionState,
+  compileReplCode,
+  evaluateRepl,
   generateSwiftStackFrameCode2
 } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 
-import { exec } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { sourceMapParseFailed } from '../dap/errors';
 import {
@@ -58,7 +59,6 @@ import {
   ISourceMapMetadata,
   IUiLocation,
   Script,
-  ScriptLocation,
   SourceContainer,
   SourceFromScript,
   SourceMap,
@@ -194,25 +194,25 @@ export class DebugSession {
     return this.sources.filter(x => x.scriptID == loc.scriptId)[0]?.findFileFromLocation(loc);
   }
 
-  findAddressFromFileLocation(file: string, line: number) {
-    for (const x of this.sources) {
-      const address = x.findAddressFromFileLocation(file, line);
+  // findAddressFromFileLocation(file: string, line: number) {
+  //   for (const x of this.sources) {
+  //     const address = x.findAddressFromFileLocation(file, line);
 
-      if (address) {
-        return {
-          scriptId: x.scriptID,
-          line: 0,
-          column: address,
-        };
-      }
-    }
+  //     if (address) {
+  //       return {
+  //         scriptId: x.scriptID,
+  //         line: 0,
+  //         column: address,
+  //       };
+  //     }
+  //   }
 
-    return undefined;
-  }
+  //   return undefined;
+  // }
 
   getVariablelistFromAddress(address: number, scriptId: string) {
     let sources = this.sources.filter(source=>source.scriptID===scriptId)
-    // sources.reverse()
+    sources.reverse()
     for (const x of sources) {
       const list = x.dwarf.variable_name_list(address);
 
@@ -276,7 +276,6 @@ export class Thread implements IVariableStoreLocationProvider {
   private readonly _onPausedEmitter = new EventEmitter<IPausedDetails>();
   private readonly _dap: DeferredContainer<Dap.Api>;
   private disposed = false;
-  private dwarfDebugSession = new DebugSession();
 
   public debuggerReady = getDeferred<void>();
 
@@ -1009,7 +1008,7 @@ export class Thread implements IVariableStoreLocationProvider {
     this._pausedDetails = this._createPausedDetails(event);
     const pausedDetails = this._pausedDetails
 
-    let dwarfSessionState = new PausedDebugSessionState(this._cdp.Debugger, this._cdp.Runtime, this.dwarfDebugSession)
+    let dwarfSessionState = new PausedDebugSessionState(this._cdp.Debugger, this._cdp.Runtime, undefined)
 
     const promises = pausedDetails.stackTrace.frames.map( async (frame)=>{
       if(!(frame instanceof StackFrame)){
@@ -1028,7 +1027,17 @@ export class Thread implements IVariableStoreLocationProvider {
       //   });
       // }
 
-      const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.callFrame.location.columnNumber!, frame.callFrame.location.scriptId)
+      // const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.callFrame.location.columnNumber!, frame.callFrame.location.scriptId)
+      const script =  this.sourceContainer.getScriptById(frame.callFrame.location.scriptId ?? "")
+      await script?.sourcePromise
+      const wasmFile: WebAssemblyFile = script?.source?.outgoingSourceMap?.wasmFile
+
+      if(!wasmFile?.dwarf) return;
+
+      const varlists = [
+        wasmFile.dwarf.global_variable_name_list(frame.callFrame.location.columnNumber!),
+        wasmFile.dwarf.variable_name_list(frame.callFrame.location.columnNumber!)
+      ]
       // frame.frame.locals = frame.locals
       // frame.frame.scopeChain.forEach(scope => scope.locals = frame.locals)
 
@@ -1036,7 +1045,10 @@ export class Thread implements IVariableStoreLocationProvider {
       // frame.callFrame.functionName = await demangle(frame.callFrame.functionName) //await demangle(frame.frame.functionName)
       frame.locals = []
 
-      if (varlist) {
+      for (const varlist of varlists) {
+        if (!varlist) {
+          continue;
+        }
         for (let i = 0; i < varlist.size(); i++)
         {
 
@@ -1048,118 +1060,95 @@ export class Thread implements IVariableStoreLocationProvider {
             const childGroupId = varlist.at_chile_group_id(i);
 
             let local = {
-              name, displayName, type, groupId, childGroupId, value: undefined
+              name,
+              displayName,
+              type,
+              groupId,
+              childGroupId,
+              evaluationResult: undefined,
+              address: undefined,
+              isPrimitive: undefined
             }
 
-              local.value = await dwarfSessionState.dumpVariable(frame, displayName)
+            let varDump = await dwarfSessionState.dumpVariable(frame, local, wasmFile)
 
-              frame.locals.push(local)
+            local.evaluationResult = varDump?.evaluationResult,
+            local.value = varDump?.evaluationResult,
+            local.address = varDump?.address,
+            local.isPrimitive = varDump?.isPrimitive
+
+            frame.locals.push(local)
+
             } catch (e) {
               console.log("unable to dump variable")
             }
         }
-
-        // hacky way to unify weird splitted types. Occurs e.g. with collection like let a = [1,2,3] . TODO: investiage reason in rust dwarf pkg
-        for(let local of frame.locals){
-          if(local.type == "<no-type-name>"){
-            let child = frame.locals.find(childLocal=>local.childGroupId === childLocal.groupId)
-            local.type = await demangle(child.type)
-          }
-        }
-
-        frame.locals = frame.locals.filter(local => local.name != '<unnamed>' && local.value?.address && local.type != "<no-type-name>" && !local.type.includes("$"))
-
       }
+
+      // hacky way to unify weird splitted types. Occurs e.g. with collection like let a = [1,2,3] . TODO: investiage reason in rust dwarf pkg
+      for(let local of frame.locals){
+        if(local.type == "<no-type-name>"){
+          let child = frame.locals.find(childLocal=>local.childGroupId === childLocal.groupId)
+          local.type = await demangle(child.type)
+        }
+      }
+
+      frame.locals = frame.locals.filter(local => local.name != '<unnamed>' && (local.address || local.evaluationResult) && local.type != "<no-type-name>" && !local.type.includes("$"))
+
     })
 
     await Promise.all(promises.filter(el=>el))
 
-    const frame = pausedDetails.stackTrace.frames[0]
+    // const frame = pausedDetails.stackTrace.frames[0]
 
-    let INCLUDE_DIRS = [
-      '/home/ubu/coding/codecad/examples/svelte-dev-app/src/swift/.build/debug',
-      // '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug',
 
-      '/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug'
-    ].reduce((res, include) => res + " -I " + include, "")
+    // let INCLUDE_DIRS = [
+    //   '/home/ubu/coding/codecad/examples/svelte-dev-app/src/swift/.build/debug',
+    //   // '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug',
 
-    const IMPORTS = `
-    //import mycode
-    import swiftwasm
-    // import oc
-    //import JavaScriptKit
-    `
+    //   '/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug'
+    // ].reduce((res, include) => res + " -I " + include, "")
+
+    // const IMPORTS = `
+    // //import mycode
+    // import swiftwasm
+    // // import oc
+    // //import JavaScriptKit
+    // `
+    const IMPORTS = this.launchConfig.swiftReplImportDeclaration.join("\n")
+    const INCLUDE_DIRS = this.launchConfig.swiftReplIncludePaths.reduce((res, include) => res + " -I " + include, "")
+
+    let swiftVars = []
+
+    for(let frame of pausedDetails.stackTrace.frames){
+      if(!frame.locals) continue
+      swiftVars.push(...frame.locals)
+    }
 
     // let INCLUDE_DIR = '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug'
-    repl: if(frame.locals?.length){
+    repl: if(swiftVars.length){
       console.time("repl")
       console.time("compiling repl code")
-      let swiftVars = frame.locals
-      let swiftReplCode = generateSwiftStackFrameCode2(swiftVars, IMPORTS)
-      writeFileSync(".repl/repl_temp.swift", swiftReplCode)
-      let deferred = getDeferred()
+      // let swiftVars = frame.locals
 
-      exec(
-        `/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi .repl/repl_temp.swift  -o .repl/repl_temp.wasm ${INCLUDE_DIRS} -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=25000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__wasm_call_ctors -Xlinker --export=repl -Xlinker --table-base=30000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --export-dynamic`,
-        (error, stdout, stderr) => {
-          if (error) {
-            console.log(`error: ${error.message}`)
-          }
-          if (stderr) {
-            console.log(`stderr: ${stderr}`)
-          }
-          console.log(`stdout: ${stdout}`)
-          deferred.resolve(error)
-        },
-      )
-
-      let error = await deferred.promise
+      writeFileSync(".repl/repl_temp.swift", generateSwiftStackFrameCode2(swiftVars, IMPORTS))
+      let error = await compileReplCode(".repl/repl_temp.swift", INCLUDE_DIRS)
       if(error)
         break repl // continues after the repl: block
 
-      var replWasmB64 = readFileSync('.repl/repl_temp.wasm', {encoding: 'base64'});
 
       console.timeEnd("compiling repl code")
 
       const args = []
 
       for(const local of swiftVars){
-        if(local?.value?.address){
-          args.push(local.value.address)
+        if(local?.address){
+          args.push(local.address)
         }
       }
-      console.time("evaluateOnCallFrame")
 
-      let replExecution = await this.cdp.Debugger.evaluateOnCallFrame({
-        callFrameId: frame?.callFrame.callFrameId,
-        expression: `
-          const wasmB64 = '${replWasmB64}'
-          let result = "[]"
-          try{
-            let buf = window.base64ToArrayBuffer(wasmB64)
-            const {instance, JsString} = window.instatiateRepl(buf)
-
-            let ptr = instance.exports.repl(${args.join(", ")})
-            // const stdout = window.repl_wasi.getStdoutString()
-            // if(stdout)
-            //   console.log(stdout);
-            // const stderr = window.repl_wasi.getStderrString();
-            // if(stderr)
-            //   console.error(stderr);
-            result = JsString(ptr)
-            //let result = JSON.parse(resultStr)
-            //console.log(result)
-          } catch (e) {
-            console.error(e)
-          }
-          result
-        `,
-        returnByValue: true,
-      });
-
-      let evalResult = replExecution?.result?.value;
-
-      console.timeEnd("evaluateOnCallFrame")
+      var replWasmB64 = readFileSync('.repl/repl_temp.wasm', {encoding: 'base64'});
+      let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.cdp, pausedDetails.stackTrace.frames[0]?.callFrame.callFrameId);
 
       let vars = []
       if(evalResult){
@@ -1169,11 +1158,23 @@ export class Thread implements IVariableStoreLocationProvider {
           console.error(e)
         }
       }
+      // TODO: refactor this hacky mess
       for(let variable of vars){
-        let local = pausedDetails.stackTrace.frames[0].locals.find(local => local.name ==  variable.name)
-        if(local)
-          local.value = variable.value
+        for(let frame of pausedDetails.stackTrace.frames){
+          if(!frame.locals) continue
+          let local = frame.locals.find(local => local.name ==  variable.name)
+          if(local)
+            local.evaluationResult = variable.value
+        }
       }
+
+      for(let frame of pausedDetails.stackTrace.frames){
+        if(!frame.locals) continue
+        for(let variable of frame.locals){
+          variable.value = variable.evaluationResult
+        }
+      }
+
       console.timeEnd("repl")
     }
 
@@ -1922,14 +1923,12 @@ export class Thread implements IVariableStoreLocationProvider {
       const container = DwarfDebugSymbolContainer.new(new Uint8Array(buffer));
       const file = new WebAssemblyFile(event.scriptId, container);
 
-      this.dwarfDebugSession.loadedWebAssembly(file);
-
       console.error(`Finish Loading ${event.url}, ${file.scriptID}`);
       // TODO: assert script.source
       sourceMap = new DwarfSourceMap(file, script.source!, deferred)
     }
 
-    if( event.sourceMapURL){
+    if(event.sourceMapURL){
       const existingSourceMap = this.sourceContainer.getSourceMapByUrl(event.sourceMapURL);
 
 
@@ -2162,7 +2161,8 @@ export class Thread implements IVariableStoreLocationProvider {
       pause && this.sourceContainer.sourceMapTimeouts().sourceMapMinPause && handler;
     if (needsPause && !this._pauseOnSourceMapBreakpointId) {
       const result = await this._cdp.Debugger.setInstrumentationBreakpoint({
-        instrumentation: 'beforeScriptWithSourceMapExecution',
+        instrumentation: 'beforeScriptExecution',
+        // instrumentation: 'beforeScriptWithSourceMapExecution',
       });
       this._pauseOnSourceMapBreakpointId = result ? result.breakpointId : undefined;
     } else if (!needsPause && this._pauseOnSourceMapBreakpointId) {

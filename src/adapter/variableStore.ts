@@ -4,6 +4,7 @@
 
 import * as l10n from '@vscode/l10n';
 import { generate } from 'astring';
+import { readFileSync, writeFileSync } from 'fs';
 import { inject, injectable } from 'inversify';
 import Cdp from '../cdp/api';
 import { ICdpApi } from '../cdp/connection';
@@ -15,6 +16,7 @@ import Dap from '../dap/api';
 import { IDapApi } from '../dap/connection';
 import * as errors from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
+import { compileReplCode, evaluateRepl, generateSwiftChildrenDumpCode } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 import * as objectPreview from './objectPreview';
 import { PreviewContextType } from './objectPreview/contexts';
 import { StackFrame, StackTrace } from './stackTrace';
@@ -220,6 +222,12 @@ class VariableContext {
     c: C,
   ): InstanceType<T>;
 
+  public createVariable(
+    ctor: typeof DwarfObjectVariable,
+    ctx: IContextInit,
+    ...rest: any
+  ): DwarfObjectVariable
+
   public createVariable<T extends VariableCtor>(
     ctor: T,
     ctx: IContextInit,
@@ -244,6 +252,8 @@ class VariableContext {
 
     return v;
   }
+
+
 
   public createVariableByType(
     ctx: IContextInit,
@@ -793,6 +803,101 @@ class ObjectVariable extends Variable implements IMemoryReadable {
   }
 }
 
+class DwarfObjectVariable implements IVariable {
+  public id = getVariableId();
+
+  constructor(
+    public context: VariableContext,
+    public type: string,
+    public address: number,
+    public customStringRepr: string | undefined,
+    public isPrimitive: boolean
+  ) {}
+
+  public get sortOrder() {
+    return this.context.sortOrder;
+  }
+
+  public async toDap(
+    previewContext: PreviewContextType,
+    valueFormat?: Dap.ValueFormat,
+  ): Promise<Dap.Variable> {
+    return {
+      name: this.context.name,
+      presentationHint: this.context.presentationHint,
+      type: this.type,
+      variablesReference: this.isPrimitive ? 0 : this.id,
+      // evaluateName: this.accessor,
+
+      // memoryReference: memoryReadableTypes.has(this.remoteObject.subtype)
+      //   ? String(this.id)
+      //   : undefined,
+      value: this.customStringRepr?.toString() || this.type,
+    };
+  }
+
+  public async getChildren(_params: Dap.VariablesParamsExtended) : Promise<IVariable[]>{
+    let thisVar = {
+      address: this.address,
+      parent: this.context.parent,
+      type: this.type,
+      name: this.context.name
+    }
+
+    const IMPORTS = "import swiftwasm"
+    const INCLUDE_DIRS = [
+      "/home/ubu/coding/codecad/examples/svelte-dev-app/src/swift/.build/debug",
+      "/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug"
+    ].reduce((res, include) => res + " -I " + include, "")
+
+    console.time("compiling repl code")
+    writeFileSync(".repl/repl_temp.swift", generateSwiftChildrenDumpCode([thisVar], IMPORTS))
+    let error = await compileReplCode(".repl/repl_temp.swift", INCLUDE_DIRS)
+    console.timeEnd("compiling repl code")
+
+    const args = [this.address ?? this.context.parent.address]
+
+    var replWasmB64 = readFileSync('.repl/repl_temp.wasm', {encoding: 'base64'});
+    let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.context.cdp);
+
+    let vars = []
+    if(evalResult){
+      try{
+        vars = JSON.parse(evalResult)
+      } catch(e) {
+        console.error(e)
+      }
+    }
+
+    let result = [] as DwarfObjectVariable[]
+    if(!vars.length)
+      return result
+    let thisVariableDump = vars[0]
+    this.address = thisVariableDump.address
+    for(let child of thisVariableDump.children){
+      result.push(
+        this.context.createVariable(DwarfObjectVariable, { name: child.name },
+             child.type,
+             undefined, // address
+             child.value,
+             !!(child.value=='nil')       //.isPrimitive
+        )
+      )
+    }
+
+    return result
+    //[
+      // this.context.createVariable(DwarfObjectVariable, { name: extraProperty.name },
+      //   extraProperty.type,
+      //   extraProperty.address,
+      //   extraProperty.value,
+      //   extraProperty.isPrimitive
+      // )
+   // ]
+    // return this.context.createObjectPropertyVars(this.remoteObject, _params.evaluationOptions);
+  }
+}
+
 class ArrayVariable extends ObjectVariable {
   private length = 0;
 
@@ -964,12 +1069,20 @@ class Scope implements IVariableContainer {
       }
     }
 
-    for (const extraProperty of this.ref.stackFrame.locals) {
+    if(this.ref.stackFrame.locals) for (const extraProperty of this.ref.stackFrame.locals) {
+        let variable = this.context.createVariable(DwarfObjectVariable, { name: extraProperty.name },
+          extraProperty.type,
+          extraProperty.address,
+          extraProperty.value,
+          extraProperty.isPrimitive
+        )
         variables.push(
-          this.context.createVariableByType({ name: extraProperty.name }, extraProperty),
+          // this.context.createVariable(ObjectVariable, { name: extraProperty.name }, {type: extraProperty.type, objectId: '66'}, extraProperty.value)
+          variable
+          // this.context.createVariableByType({ name: extraProperty.name }, extraProperty.value),
+          // new ObjectVariable({ name: extraProperty.name }, {type: this.remoteObject.type, objectId: 66}, extraProperty.value)
         );
     }
-
 
     return variables;
   }

@@ -753,9 +753,13 @@ export class DwarfSourceMap implements ISourceMap{
   sources: string[]
   finishLoading: Promise<void>;
 
-  constructor(private wasmFile: WebAssemblyFile, public source: Source, public deferred: IDeferred<void>){
-    this.sources = wasmFile.dwarf.source_list()
-    this.finishLoading = deferred.promise
+  constructor(
+    private wasmFile: WebAssemblyFile,
+    public source: Source,
+    public deferred: IDeferred<void>
+  ){
+      this.sources = wasmFile.dwarf.source_list()
+      this.finishLoading = deferred.promise
   }
 
   /**
@@ -810,6 +814,10 @@ export class DwarfSourceMap implements ISourceMap{
 
   sourceContentFor(source: string, returnNullOnMissing?: boolean | undefined): string | null {
     return null
+  }
+
+  destroy(){
+    // this.wasmFile.free()
   }
 }
 
