@@ -811,7 +811,8 @@ class DwarfObjectVariable implements IVariable {
     public type: string,
     public address: number,
     public customStringRepr: string | undefined,
-    public isPrimitive: boolean
+    public isPrimitive: boolean,
+    public kind: string
   ) {}
 
   public get sortOrder() {
@@ -841,6 +842,7 @@ class DwarfObjectVariable implements IVariable {
       address: this.address,
       parent: this.context.parent,
       type: this.type,
+      kind: this.kind,
       name: this.context.name
     }
 
@@ -877,10 +879,11 @@ class DwarfObjectVariable implements IVariable {
     for(let child of thisVariableDump.children){
       result.push(
         this.context.createVariable(DwarfObjectVariable, { name: child.name },
-             child.type,
-             undefined, // address
-             child.value,
-             !!(child.value=='nil')       //.isPrimitive
+            child.type,
+            undefined, // address
+            child.value,
+            !!(child.value=='nil'),      //.isPrimitive
+            child.kind
         )
       )
     }
@@ -1074,7 +1077,8 @@ class Scope implements IVariableContainer {
           extraProperty.type,
           extraProperty.address,
           extraProperty.value,
-          extraProperty.isPrimitive
+          extraProperty.isPrimitive,
+          extraProperty.kind
         )
         variables.push(
           // this.context.createVariable(ObjectVariable, { name: extraProperty.name }, {type: extraProperty.type, objectId: '66'}, extraProperty.value)

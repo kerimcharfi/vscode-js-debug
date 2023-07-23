@@ -488,7 +488,7 @@ export function generateSwiftChildrenDumpCode(vars, importDecl){
   let pointerDeref = ""
   let variableDumps = ""
 
-  for(let {name, type, address, parent} of vars){
+  for(let {name, type, address, parent, kind} of vars){
 
     name = name.replace("<", "_").replace(">", "_").replace("-", "_")
     const isOptional = type.startsWith("Optional<")
@@ -497,20 +497,26 @@ export function generateSwiftChildrenDumpCode(vars, importDecl){
     if(address){
       args.push(`__${name}_ptr: UnsafeMutableRawPointer`)
 
-      pointerDeref = pointerDeref + `let ${name} = __${name}_ptr.assumingMemoryBound(to: ${type}.self).pointee\n  `
+      pointerDeref = pointerDeref + `let _${name} = __${name}_ptr.assumingMemoryBound(to: ${type}.self).pointee\n  `
     } else if (parent && name) {
       args.push(`__${name}_parent_ptr: UnsafeMutableRawPointer`)
+
+      let accessor = '.' + name
+      if(parent.kind == "collection"){
+        accessor = '[' + name + ']'
+      }
+      let targetExpr = `_${name}_parent${parentIsOptional ? '!' : ''}${accessor}${isOptional ? '!' : ''}`
       pointerDeref = pointerDeref
-                          + `let ${name}_parent = __${name}_parent_ptr.assumingMemoryBound(to: ${parent.type}.self).pointee\n    `
-                          + `let ${name} = ${name}_parent${parentIsOptional ? '!' : ''}.${name}${isOptional ? '!' : ''}\n    `
-                          + `let __${name}_ptr = withUnsafePointer(to: ${name}){\n      ptr in ptr\n    }\n  `
+                          + `var _${name}_parent = __${name}_parent_ptr.assumingMemoryBound(to: ${parent.type}.self).pointee\n    `
+                          + `let _${name} = ${targetExpr}\n    `
+                          + `let __${name}_ptr = withUnsafePointer(to: &${targetExpr}){\n      ptr in ptr\n    }\n  `
 
     } else {
       console.error("variable has no address nor parent")
     }
 
     // variableDumps = variableDumps + `Variable(name: "${name}", type: "${type}", value: "\\(${name})"),\n      `
-    variableDumps = variableDumps + `dumpVariablesChildren(${name}, Int(bitPattern:__${name}_ptr)),\n      `
+    variableDumps = variableDumps + `dumpVariablesChildren(_${name}, Int(bitPattern:__${name}_ptr)),\n      `
   }
 
   return `
@@ -522,20 +528,24 @@ export function generateSwiftChildrenDumpCode(vars, importDecl){
     let mirror = Mirror(reflecting: obj)
 
     var result = Variable(
-        children: [],
-        address: address
+      children: [],
+      address: address,
+      countChildren: mirror.children.count
     )
 
-    for child in mirror.children {
-        result.children.append(dumpVariable(child.value, child.label))
+    if mirror.children.count < 15 {
+      for (i, child) in mirror.children.enumerated() {
+        result.children.append(dumpVariable(child.value, child.label ?? String(i)))
+      }
     }
+
     return result
   }
 
-  func dumpVariable(_ child: Any, _ name: String?) -> VariableChild{
+  func dumpVariable(_ child: Any, _ name: String) -> VariableChild{
       let childMirror = Mirror(reflecting: child)
       return VariableChild(
-          name: name ?? "",
+          name: name,
           type: "\\(childMirror.subjectType)",
           value: "\\(child)",
           kind: childMirror.displayStyle != nil ? String(describing: childMirror.displayStyle!): ""
