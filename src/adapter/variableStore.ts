@@ -803,6 +803,46 @@ class ObjectVariable extends Variable implements IMemoryReadable {
   }
 }
 
+
+// class DictEntryVariable implements IVariable {
+//   public id = getVariableId();
+//   constructor(
+//     public context: VariableContext,
+//     public repr: string,
+//     public keyAddress: number,
+//     public valueAddress: string | undefined,
+//   ) {}
+
+//   public get sortOrder() {
+//     return this.context.sortOrder;
+//   }
+
+//   public async toDap(
+//     previewContext: PreviewContextType,
+//     valueFormat?: Dap.ValueFormat,
+//   ): Promise<Dap.Variable> {
+//     return {
+//       name: this.context.name,
+//       presentationHint: this.context.presentationHint,
+//       variablesReference: this.id,
+//       value: this.repr
+//     };
+//   }
+
+//   public async getChildren(){
+//     return [
+//       this.context.createVariable(DwarfObjectVariable, { name: "key" },
+//         child.type,
+//         undefined, // address
+//         child.value,
+//         !!(child.value=='nil'),      //.isPrimitive
+//         child.kind,
+//         child.countChildren
+//     )
+//     ]
+//   }
+// }
+
 class DwarfObjectVariable implements IVariable {
   public id = getVariableId();
 
@@ -812,7 +852,10 @@ class DwarfObjectVariable implements IVariable {
     public address: number,
     public customStringRepr: string | undefined,
     public isPrimitive: boolean,
-    public kind: string
+    public kind: string,
+    public countChildren: number,
+    public keyPathRoot: DwarfObjectVariable,
+    public keyPath: string = ""
   ) {}
 
   public get sortOrder() {
@@ -828,6 +871,8 @@ class DwarfObjectVariable implements IVariable {
       presentationHint: this.context.presentationHint,
       type: this.type,
       variablesReference: this.isPrimitive ? 0 : this.id,
+      indexedVariables: this.countChildren > 100 ? this.countChildren : undefined,
+
       // evaluateName: this.accessor,
 
       // memoryReference: memoryReadableTypes.has(this.remoteObject.subtype)
@@ -838,12 +883,20 @@ class DwarfObjectVariable implements IVariable {
   }
 
   public async getChildren(_params: Dap.VariablesParamsExtended) : Promise<IVariable[]>{
+    if(this.kind === "collection" && this.countChildren > 100 && _params.start == undefined){
+      return []
+    }
+
+    // TODO: remove this and pass this to downstream function calls
     let thisVar = {
       address: this.address,
       parent: this.context.parent,
       type: this.type,
       kind: this.kind,
-      name: this.context.name
+      name: this.context.name,
+      countChildren: this.countChildren,
+      keyPath: this.keyPath,
+      keyPathRoot: this.keyPathRoot
     }
 
     const IMPORTS = "import swiftwasm"
@@ -853,11 +906,11 @@ class DwarfObjectVariable implements IVariable {
     ].reduce((res, include) => res + " -I " + include, "")
 
     console.time("compiling repl code")
-    writeFileSync(".repl/repl_temp.swift", generateSwiftChildrenDumpCode([thisVar], IMPORTS))
+    writeFileSync(".repl/repl_temp.swift", generateSwiftChildrenDumpCode([thisVar], IMPORTS, _params))
     let error = await compileReplCode(".repl/repl_temp.swift", INCLUDE_DIRS)
     console.timeEnd("compiling repl code")
 
-    const args = [this.address ?? this.context.parent.address]
+    const args = [this.address || this.context.parent?.address || this.keyPathRoot?.address]
 
     var replWasmB64 = readFileSync('.repl/repl_temp.wasm', {encoding: 'base64'});
     let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.context.cdp);
@@ -877,13 +930,25 @@ class DwarfObjectVariable implements IVariable {
     let thisVariableDump = vars[0]
     this.address = thisVariableDump.address
     for(let child of thisVariableDump.children){
+      let accessor = "." + child.name
+
+      if(this.kind == "collection"){
+        accessor = '[' + child.name + ']'
+      }
+      if(this.kind == "dictionary"){
+        accessor = '.elAt(' + child.name + ')'
+      }
+
       result.push(
         this.context.createVariable(DwarfObjectVariable, { name: child.name },
             child.type,
             undefined, // address
             child.value,
             !!(child.value=='nil'),      //.isPrimitive
-            child.kind
+            child.kind,
+            child.countChildren,
+            this.address ? this : this.keyPathRoot,
+            this.address ? accessor: this.keyPath + accessor
         )
       )
     }
@@ -1078,7 +1143,8 @@ class Scope implements IVariableContainer {
           extraProperty.address,
           extraProperty.value,
           extraProperty.isPrimitive,
-          extraProperty.kind
+          extraProperty.kind,
+          extraProperty.countChildren
         )
         variables.push(
           // this.context.createVariable(ObjectVariable, { name: extraProperty.name }, {type: extraProperty.type, objectId: '66'}, extraProperty.value)

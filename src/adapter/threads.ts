@@ -1072,10 +1072,12 @@ export class Thread implements IVariableStoreLocationProvider {
 
             let varDump = await dwarfSessionState.dumpVariable(frame, local, wasmFile)
 
-            local.evaluationResult = varDump?.evaluationResult,
+            // TODO: refactor this mess
+            local = {
+              ...local,
+              ...varDump
+            }
             local.value = varDump?.evaluationResult,
-            local.address = varDump?.address,
-            local.isPrimitive = varDump?.isPrimitive
 
             frame.locals.push(local)
 
@@ -1163,8 +1165,10 @@ export class Thread implements IVariableStoreLocationProvider {
         for(let frame of pausedDetails.stackTrace.frames){
           if(!frame.locals) continue
           let local = frame.locals.find(local => local.name ==  variable.name)
-          if(local)
+          if(local){
+            Object.assign(local, variable)
             local.evaluationResult = variable.value
+          }
         }
       }
 

@@ -393,10 +393,12 @@ export function generateSwiftStackFrameCode2(vars, importDecl){
     pointerDeref = pointerDeref
       + `let ${name} = __${name}_ptr.assumingMemoryBound(to: ${type}.self).pointee\n  `
       + `var __${name}_value = String()\n  `
+      + `let __${name}_mirror = Mirror(reflecting: ${name})\n  `
       + `dump(${name}, to: &__${name}_value, maxDepth: 1)\n  `
 
     // variableDumps = variableDumps + `Variable(name: "${name}", type: "${type}", value: "\\(${name})"),\n      `
-    variableDumps = variableDumps + `VariableChild(name: "${name}", type: "${type}", value: __${name}_value, kind: ""),\n      `
+    variableDumps = variableDumps
+      + `VariableChild( name: "${name}", type: "${type}", value: __${name}_value, kind: __${name}_mirror.displayStyle != nil ? String(describing: __${name}_mirror.displayStyle!): "", countChildren: __${name}_mirror.children.count),\n      `
   }
 
   return `
@@ -483,40 +485,47 @@ export async function evaluateRepl(replWasmB64: string, args: string, cdp: Cdp.A
   return evalResult
 }
 
-export function generateSwiftChildrenDumpCode(vars, importDecl){
+
+export function generateSwiftChildrenDumpCode(vars, importDecl, params){
   let args = []
   let pointerDeref = ""
   let variableDumps = ""
 
-  for(let {name, type, address, parent, kind} of vars){
+  for(let {name, type, address, parent, kind, countChildren, keyPath, keyPathRoot} of vars){
 
     name = name.replace("<", "_").replace(">", "_").replace("-", "_")
     const isOptional = type.startsWith("Optional<")
     const parentIsOptional = parent?.type?.startsWith("Optional<")
 
     if(address){
-      args.push(`__${name}_ptr: UnsafeMutableRawPointer`)
+      args.push(`__${name}_ptr: UnsafeMutableRawPointer?`)
 
-      pointerDeref = pointerDeref + `let _${name} = __${name}_ptr.assumingMemoryBound(to: ${type}.self).pointee\n  `
-    } else if (parent && name) {
+      pointerDeref = pointerDeref + `var _${name} = __${name}_ptr!.assumingMemoryBound(to: ${type}.self).pointee\n  `
+    } else if (parent?.address && name && parent.kind != "dictionary") {
       args.push(`__${name}_parent_ptr: UnsafeMutableRawPointer`)
 
       let accessor = '.' + name
       if(parent.kind == "collection"){
         accessor = '[' + name + ']'
       }
-      let targetExpr = `_${name}_parent${parentIsOptional ? '!' : ''}${accessor}${isOptional ? '!' : ''}`
+      let targetExpr = `__${name}_parent_ptr.assumingMemoryBound(to: ${parent.type}.self).pointee${parentIsOptional ? '!' : ''}${accessor}${isOptional ? '!' : ''}`
       pointerDeref = pointerDeref
                           + `var _${name}_parent = __${name}_parent_ptr.assumingMemoryBound(to: ${parent.type}.self).pointee\n    `
-                          + `let _${name} = ${targetExpr}\n    `
-                          + `let __${name}_ptr = withUnsafePointer(to: &${targetExpr}){\n      ptr in ptr\n    }\n  `
+                          + `var _${name} = ${targetExpr}\n    `
+                          + `let __${name}_ptr = Optional.some(withUnsafePointer(to: &${targetExpr}){\n      ptr in ptr\n    })\n  `
 
+    } else if (keyPathRoot && keyPath){
+      args.push(`__${name}_root_ptr: UnsafeMutableRawPointer`)
+      pointerDeref = pointerDeref
+        + `var _${name}_root = __${name}_root_ptr.assumingMemoryBound(to: ${keyPathRoot.type}.self).pointee\n    `
+        + `var _${name} = _${name}_root${keyPath}\n    `
+        + `let __${name}_ptr: UnsafePointer<Int>? = Optional.none\n  `
     } else {
       console.error("variable has no address nor parent")
     }
 
     // variableDumps = variableDumps + `Variable(name: "${name}", type: "${type}", value: "\\(${name})"),\n      `
-    variableDumps = variableDumps + `dumpVariablesChildren(_${name}, Int(bitPattern:__${name}_ptr)),\n      `
+    variableDumps = variableDumps + `dumpVariablesChildren(&_${name}, __${name}_ptr != nil ? Int(bitPattern:__${name}_ptr!) : 0, ${params.start ?? 0}, ${params.count ?? countChildren}),\n      `
   }
 
   return `
@@ -524,20 +533,102 @@ export function generateSwiftChildrenDumpCode(vars, importDecl){
 
   ${importDecl}
 
-  func dumpVariablesChildren<T>(_ obj: T, _ address: Int) -> Variable {
+  extension Dictionary{
+    public func elAt(_ position: Int) -> Element {
+      return self[self.index(self.startIndex, offsetBy: position)]
+    }
+  }
+
+  // func dumpVariablesChildren<K, V>(_ obj: inout Dictionary<K,V>, _ address: Int, _ start: Int, _ count: Int) -> Variable {
+
+  //   var result = Variable(
+  //     children: [],
+  //     address: address
+  //   )
+
+
+  //   for (i, el) in obj.enumerated() {
+  //       if i < start {
+  //         continue
+  //       }
+  //       if i >= start + count {
+  //         break
+  //       }
+
+  //       let index = obj.index(forKey: el.key)!
+  //       let keyAddress = 0 // obj.keyAt(index)
+  //      // let keyAddress = withUnsafePointer(to: &obj.keyAt(index)){ptr in ptr}
+  //       let valueAddress = withUnsafePointer(to: &obj[el.key]){ptr in ptr}
+
+  //      result.children.append(dumpVariable(el, "\\(i),\\(index),\\(keyAddress),\\(valueAddress)"))
+  //  }
+   //} else {
+   // for (i, child) in mirror.children.enumerated() {
+   //  if i < start {
+   //     continue
+  //    }
+   //   if i >= start + count {
+   //     break
+   //   }
+   //   let accessor = child.label ?? String(i)
+   //   if case .dictionary = mirror.displayStyle {
+   //     accessor = obj.index(child.key)
+   //   }
+   //   result.children.append(dumpVariable(child.value, accessor)
+   // }
+   //}
+   // } else {
+   //   for (i, child) in mirror.children[AnyIndex(start)...AnyIndex(start+count-1)].enumerated() {
+   //     result.children.append(dumpVariable(child.value, child.label ?? String(i+start)))
+   //   }
+   // }
+
+  //   return result
+  // }
+
+  func dumpVariablesChildren<T>(_ obj: inout T, _ address: Int, _ start: Int, _ count: Int) -> Variable {
     let mirror = Mirror(reflecting: obj)
 
     var result = Variable(
       children: [],
-      address: address,
-      countChildren: mirror.children.count
+      address: address
     )
 
-    if mirror.children.count < 15 {
-      for (i, child) in mirror.children.enumerated() {
-        result.children.append(dumpVariable(child.value, child.label ?? String(i)))
+   //if case .dictionary = mirror.displayStyle{
+   //  for (i, el) in obj.enumerated() {
+   //     if i < start {
+   //       continue
+   //     }
+   //     if i >= start + count {
+   //       break
+   //     }
+   //     let dict = ..
+   //     let index = obj.index(el.key)
+   //     let keyAddress = withUnsafePointer(to: &dict.keys[index])
+   //     let valueAddress = withUnsafePointer(to: &dict.values[index])
+   //
+   //    result.children.append(dumpVariable(child.value, "\\(i),\\(index),\\(keyAddress),\\(valueAddress)"))
+   //  }
+   //} else {
+    for (i, child) in mirror.children.enumerated() {
+      if i < start {
+        continue
       }
+      if i >= start + count {
+        break
+      }
+      let accessor = child.label ?? String(i)
+    //  if case .dictionary = mirror.displayStyle {
+    //    accessor = obj.index(child.key)
+    //  }
+      result.children.append(dumpVariable(child.value, accessor))
     }
+   //}
+   // } else {
+   //   for (i, child) in mirror.children[AnyIndex(start)...AnyIndex(start+count-1)].enumerated() {
+   //     result.children.append(dumpVariable(child.value, child.label ?? String(i+start)))
+   //   }
+   // }
 
     return result
   }
@@ -548,7 +639,8 @@ export function generateSwiftChildrenDumpCode(vars, importDecl){
           name: name,
           type: "\\(childMirror.subjectType)",
           value: "\\(child)",
-          kind: childMirror.displayStyle != nil ? String(describing: childMirror.displayStyle!): ""
+          kind: childMirror.displayStyle != nil ? String(describing: childMirror.displayStyle!): "",
+          countChildren: childMirror.children.count
       )
   }
 
