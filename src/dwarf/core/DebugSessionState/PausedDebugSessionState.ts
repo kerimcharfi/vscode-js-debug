@@ -4,6 +4,7 @@
 import { exec } from 'child_process';
 import type Protocol from 'devtools-protocol/types/protocol';
 import type ProtocolApi from 'devtools-protocol/types/protocol-proxy-api';
+import { copyFileSync, rmSync } from 'fs';
 import { StackFrame } from '../../../adapter/stackTrace';
 import Cdp from '../../../cdp/api';
 import { getDeferred } from '../../../common/promiseUtil';
@@ -418,11 +419,11 @@ export function generateSwiftStackFrameCode2(vars, importDecl){
   }`
 }
 
-export function compileReplCode(fileName: string, INCLUDE_DIRS: string){
+export function compileReplCode(fileName: string, outFileName: string, INCLUDE_DIRS: string){
   let deferred = getDeferred()
 
   exec(
-    `/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi .repl/repl_temp.swift  -o .repl/repl_temp.wasm ${INCLUDE_DIRS} -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=25000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__wasm_call_ctors -Xlinker --export=repl -Xlinker --table-base=30000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --export-dynamic`,
+    `/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi ${fileName} -o ${outFileName} ${INCLUDE_DIRS} -suppress-warnings -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=25000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__wasm_call_ctors -Xlinker --export=repl -Xlinker --table-base=30000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --export-dynamic`,
     (error, stdout, stderr) => {
       if (error) {
         console.log(`error: ${error.message}`)
@@ -430,7 +431,9 @@ export function compileReplCode(fileName: string, INCLUDE_DIRS: string){
       if (stderr) {
         console.log(`stderr: ${stderr}`)
       }
-      console.log(`stdout: ${stdout}`)
+      if(stdout) {
+        console.log(`stdout: ${stdout}`)
+      }
       deferred.resolve(error)
     },
   )
@@ -485,32 +488,44 @@ export async function evaluateRepl(replWasmB64: string, args: string, cdp: Cdp.A
   return evalResult
 }
 
+let __file_id = 0
+
+export const getReplFileId = ()=>{return __file_id++}
+
+export function clearReplBuild(file: string){
+  copyFileSync(`${file}.swift`, ".repl/repl.swift")
+  rmSync(`${file}.swift`)
+  copyFileSync(`${file}.wasm`, ".repl/repl.wasm")
+  rmSync(`${file}.wasm`)
+  copyFileSync(`${file}.swiftdoc`, ".repl/repl.swiftdoc")
+  rmSync(`${file}.swiftdoc`)
+  copyFileSync(`${file}.swiftmodule`, ".repl/repl.swiftmodule")
+  rmSync(`${file}.swiftmodule`)
+  copyFileSync(`${file}.swiftsourceinfo`, ".repl/repl.swiftsourceinfo")
+  rmSync(`${file}.swiftsourceinfo`)
+}
 
 export function generateSwiftChildrenDumpCode(vars, importDecl, params){
   let args = []
   let pointerDeref = ""
   let variableDumps = ""
 
-  for(let {name, type, address, parent, kind, countChildren, keyPath, keyPathRoot} of vars){
+  for(let {context, type, address, kind, countChildren, keyPath, keyPathRoot} of vars){
 
-    name = name.replace("<", "_").replace(">", "_").replace("-", "_")
+    let name = context.name.replace("<", "_").replace(">", "_").replace("-", "_").replace(".", "")
     const isOptional = type.startsWith("Optional<")
-    const parentIsOptional = parent?.type?.startsWith("Optional<")
+    const parentIsOptional = context.parent?.type?.startsWith("Optional<")
 
     if(address){
       args.push(`__${name}_ptr: UnsafeMutableRawPointer?`)
 
       pointerDeref = pointerDeref + `var _${name} = __${name}_ptr!.assumingMemoryBound(to: ${type}.self).pointee\n  `
-    } else if (parent?.address && name && parent.kind != "dictionary") {
+    } else if (context.parent?.address && name && context.parent.kind != "dictionary" && context.parent.kind != "set") {
       args.push(`__${name}_parent_ptr: UnsafeMutableRawPointer`)
 
-      let accessor = '.' + name
-      if(parent.kind == "collection"){
-        accessor = '[' + name + ']'
-      }
-      let targetExpr = `__${name}_parent_ptr.assumingMemoryBound(to: ${parent.type}.self).pointee${parentIsOptional ? '!' : ''}${accessor}${isOptional ? '!' : ''}`
+      let targetExpr = `__${name}_parent_ptr.assumingMemoryBound(to: ${context.parent.type}.self).pointee${parentIsOptional ? '!' : ''}${keyPath}${isOptional ? '!' : ''}`
       pointerDeref = pointerDeref
-                          + `var _${name}_parent = __${name}_parent_ptr.assumingMemoryBound(to: ${parent.type}.self).pointee\n    `
+                          + `var _${name}_parent = __${name}_parent_ptr.assumingMemoryBound(to: ${context.parent.type}.self).pointee\n    `
                           + `var _${name} = ${targetExpr}\n    `
                           + `let __${name}_ptr = Optional.some(withUnsafePointer(to: &${targetExpr}){\n      ptr in ptr\n    })\n  `
 
@@ -525,7 +540,11 @@ export function generateSwiftChildrenDumpCode(vars, importDecl, params){
     }
 
     // variableDumps = variableDumps + `Variable(name: "${name}", type: "${type}", value: "\\(${name})"),\n      `
-    variableDumps = variableDumps + `dumpVariablesChildren(&_${name}, __${name}_ptr != nil ? Int(bitPattern:__${name}_ptr!) : 0, ${params.start ?? 0}, ${params.count ?? countChildren}),\n      `
+    if(kind == 'enum'){
+      variableDumps = variableDumps + `Variable(children: [dumpVariable(_${name}.rawValue, "rawValue")], address: 0),\n      `
+    } else {
+      variableDumps = variableDumps + `dumpVariablesChildren(&_${name}, __${name}_ptr != nil ? Int(bitPattern:__${name}_ptr!) : 0, ${params.start ?? 0}, ${params.count ?? countChildren}),\n      `
+    }
   }
 
   return `
@@ -533,19 +552,23 @@ export function generateSwiftChildrenDumpCode(vars, importDecl, params){
 
   ${importDecl}
 
-  extension Dictionary{
+  extension Dictionary where Key : Hashable{
     public func elAt(_ position: Int) -> Element {
       return self[self.index(self.startIndex, offsetBy: position)]
     }
   }
 
-  // func dumpVariablesChildren<K, V>(_ obj: inout Dictionary<K,V>, _ address: Int, _ start: Int, _ count: Int) -> Variable {
+  extension Set where Element : Hashable{
+    public func elAt(_ position: Int) -> Element {
+      return self[self.index(self.startIndex, offsetBy: position)]
+    }
+  }
 
+  // func dumpVariablesChildren<V>(_ obj: inout Set<V>, _ address: Int, _ start: Int, _ count: Int) -> Variable {
   //   var result = Variable(
   //     children: [],
   //     address: address
   //   )
-
 
   //   for (i, el) in obj.enumerated() {
   //       if i < start {
@@ -555,33 +578,9 @@ export function generateSwiftChildrenDumpCode(vars, importDecl, params){
   //         break
   //       }
 
-  //       let index = obj.index(forKey: el.key)!
-  //       let keyAddress = 0 // obj.keyAt(index)
-  //      // let keyAddress = withUnsafePointer(to: &obj.keyAt(index)){ptr in ptr}
-  //       let valueAddress = withUnsafePointer(to: &obj[el.key]){ptr in ptr}
-
-  //      result.children.append(dumpVariable(el, "\\(i),\\(index),\\(keyAddress),\\(valueAddress)"))
-  //  }
-   //} else {
-   // for (i, child) in mirror.children.enumerated() {
-   //  if i < start {
-   //     continue
-  //    }
-   //   if i >= start + count {
-   //     break
-   //   }
-   //   let accessor = child.label ?? String(i)
-   //   if case .dictionary = mirror.displayStyle {
-   //     accessor = obj.index(child.key)
-   //   }
-   //   result.children.append(dumpVariable(child.value, accessor)
-   // }
-   //}
-   // } else {
-   //   for (i, child) in mirror.children[AnyIndex(start)...AnyIndex(start+count-1)].enumerated() {
-   //     result.children.append(dumpVariable(child.value, child.label ?? String(i+start)))
-   //   }
-   // }
+  //     //  result.children.append(dumpVariable(el, "\\(i),\\(index),\\(keyAddress),\\(valueAddress)"))
+  //      result.children.append(dumpVariable(el, String(i)))
+  //   }
 
   //   return result
   // }
@@ -594,22 +593,6 @@ export function generateSwiftChildrenDumpCode(vars, importDecl, params){
       address: address
     )
 
-   //if case .dictionary = mirror.displayStyle{
-   //  for (i, el) in obj.enumerated() {
-   //     if i < start {
-   //       continue
-   //     }
-   //     if i >= start + count {
-   //       break
-   //     }
-   //     let dict = ..
-   //     let index = obj.index(el.key)
-   //     let keyAddress = withUnsafePointer(to: &dict.keys[index])
-   //     let valueAddress = withUnsafePointer(to: &dict.values[index])
-   //
-   //    result.children.append(dumpVariable(child.value, "\\(i),\\(index),\\(keyAddress),\\(valueAddress)"))
-   //  }
-   //} else {
     for (i, child) in mirror.children.enumerated() {
       if i < start {
         continue
@@ -618,22 +601,16 @@ export function generateSwiftChildrenDumpCode(vars, importDecl, params){
         break
       }
       let accessor = child.label ?? String(i)
-    //  if case .dictionary = mirror.displayStyle {
-    //    accessor = obj.index(child.key)
-    //  }
+
       result.children.append(dumpVariable(child.value, accessor))
     }
-   //}
-   // } else {
-   //   for (i, child) in mirror.children[AnyIndex(start)...AnyIndex(start+count-1)].enumerated() {
-   //     result.children.append(dumpVariable(child.value, child.label ?? String(i+start)))
-   //   }
-   // }
+
+
 
     return result
   }
 
-  func dumpVariable(_ child: Any, _ name: String) -> VariableChild{
+  func dumpVariable<T>(_ child: T, _ name: String) -> VariableChild{
       let childMirror = Mirror(reflecting: child)
       return VariableChild(
           name: name,

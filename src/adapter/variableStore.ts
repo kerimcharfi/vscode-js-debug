@@ -16,7 +16,7 @@ import Dap from '../dap/api';
 import { IDapApi } from '../dap/connection';
 import * as errors from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
-import { compileReplCode, evaluateRepl, generateSwiftChildrenDumpCode } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
+import { clearReplBuild, compileReplCode, evaluateRepl, generateSwiftChildrenDumpCode, getReplFileId } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 import * as objectPreview from './objectPreview';
 import { PreviewContextType } from './objectPreview/contexts';
 import { StackFrame, StackTrace } from './stackTrace';
@@ -803,46 +803,6 @@ class ObjectVariable extends Variable implements IMemoryReadable {
   }
 }
 
-
-// class DictEntryVariable implements IVariable {
-//   public id = getVariableId();
-//   constructor(
-//     public context: VariableContext,
-//     public repr: string,
-//     public keyAddress: number,
-//     public valueAddress: string | undefined,
-//   ) {}
-
-//   public get sortOrder() {
-//     return this.context.sortOrder;
-//   }
-
-//   public async toDap(
-//     previewContext: PreviewContextType,
-//     valueFormat?: Dap.ValueFormat,
-//   ): Promise<Dap.Variable> {
-//     return {
-//       name: this.context.name,
-//       presentationHint: this.context.presentationHint,
-//       variablesReference: this.id,
-//       value: this.repr
-//     };
-//   }
-
-//   public async getChildren(){
-//     return [
-//       this.context.createVariable(DwarfObjectVariable, { name: "key" },
-//         child.type,
-//         undefined, // address
-//         child.value,
-//         !!(child.value=='nil'),      //.isPrimitive
-//         child.kind,
-//         child.countChildren
-//     )
-//     ]
-//   }
-// }
-
 class DwarfObjectVariable implements IVariable {
   public id = getVariableId();
 
@@ -872,8 +832,7 @@ class DwarfObjectVariable implements IVariable {
       type: this.type,
       variablesReference: this.isPrimitive ? 0 : this.id,
       indexedVariables: this.countChildren > 100 ? this.countChildren : undefined,
-
-      // evaluateName: this.accessor,
+      namedVariables: this.kind == "collection" && this.countChildren > 100 ? 1 : undefined, // do not count properties proactively
 
       // memoryReference: memoryReadableTypes.has(this.remoteObject.subtype)
       //   ? String(this.id)
@@ -883,37 +842,39 @@ class DwarfObjectVariable implements IVariable {
   }
 
   public async getChildren(_params: Dap.VariablesParamsExtended) : Promise<IVariable[]>{
+    let result = [] as IVariable[]
+    // adding .count property to collections, sets, dicts
+    if(_params.filter != "indexed" && (this.kind === "collection" || this.kind === "set" || this.kind === "dictionary")){
+      result.push(
+        this.context.createVariable(DwarfObjectVariable, { name: "count" },
+          "Int",
+          undefined, // address
+          this.countChildren.toString(), // value
+          true,      //.isPrimitive
+      )
+      )
+    }
+    // if this has too many children, the paged mechanism is used
     if(this.kind === "collection" && this.countChildren > 100 && _params.start == undefined){
-      return []
+      return result
     }
 
-    // TODO: remove this and pass this to downstream function calls
-    let thisVar = {
-      address: this.address,
-      parent: this.context.parent,
-      type: this.type,
-      kind: this.kind,
-      name: this.context.name,
-      countChildren: this.countChildren,
-      keyPath: this.keyPath,
-      keyPathRoot: this.keyPathRoot
-    }
-
-    const IMPORTS = "import swiftwasm"
-    const INCLUDE_DIRS = [
-      "/home/ubu/coding/codecad/examples/svelte-dev-app/src/swift/.build/debug",
-      "/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug"
-    ].reduce((res, include) => res + " -I " + include, "")
+    const IMPORTS = this.context.locationProvider.launchConfig.swiftReplImportDeclaration.join("\n")
+    const INCLUDE_DIRS = this.context.locationProvider.launchConfig.swiftReplIncludePaths.reduce((res, include) => res + " -I " + include, "")
 
     console.time("compiling repl code")
-    writeFileSync(".repl/repl_temp.swift", generateSwiftChildrenDumpCode([thisVar], IMPORTS, _params))
-    let error = await compileReplCode(".repl/repl_temp.swift", INCLUDE_DIRS)
+    let fileId = getReplFileId()
+    writeFileSync(`.repl/repl_temp${fileId}.swift`, generateSwiftChildrenDumpCode([this], IMPORTS, _params))
+    let error = await compileReplCode(`.repl/repl_temp${fileId}.swift`, `.repl/repl_temp${fileId}.wasm`, INCLUDE_DIRS)
+
     console.timeEnd("compiling repl code")
 
     const args = [this.address || this.context.parent?.address || this.keyPathRoot?.address]
 
-    var replWasmB64 = readFileSync('.repl/repl_temp.wasm', {encoding: 'base64'});
+    var replWasmB64 = readFileSync(`.repl/repl_temp${fileId}.wasm`, {encoding: 'base64'});
     let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.context.cdp);
+
+    clearReplBuild(`.repl/repl_temp${fileId}`)
 
     let vars = []
     if(evalResult){
@@ -924,11 +885,11 @@ class DwarfObjectVariable implements IVariable {
       }
     }
 
-    let result = [] as DwarfObjectVariable[]
     if(!vars.length)
       return result
     let thisVariableDump = vars[0]
     this.address = thisVariableDump.address
+
     for(let child of thisVariableDump.children){
       let accessor = "." + child.name
 
@@ -937,6 +898,12 @@ class DwarfObjectVariable implements IVariable {
       }
       if(this.kind == "dictionary"){
         accessor = '.elAt(' + child.name + ')'
+      }
+      if(this.kind == "set"){
+        accessor = '.elAt(' + child.name + ')'
+      }
+      if(this.kind == "tuple"){
+        accessor = child.name
       }
 
       result.push(
@@ -954,15 +921,6 @@ class DwarfObjectVariable implements IVariable {
     }
 
     return result
-    //[
-      // this.context.createVariable(DwarfObjectVariable, { name: extraProperty.name },
-      //   extraProperty.type,
-      //   extraProperty.address,
-      //   extraProperty.value,
-      //   extraProperty.isPrimitive
-      // )
-   // ]
-    // return this.context.createObjectPropertyVars(this.remoteObject, _params.evaluationOptions);
   }
 }
 
@@ -1127,7 +1085,7 @@ class Scope implements IVariableContainer {
   ) {}
 
   public async getChildren(_params: Dap.VariablesParams): Promise<Variable[]> {
-    const variables = await this.context.createObjectPropertyVars(this.remoteObject);
+    const variables: IVariable[] = await this.context.createObjectPropertyVars(this.remoteObject);
     const existing = new Set(variables.map(v => v.name));
     for (const extraProperty of this.extraProperties) {
       if (!existing.has(extraProperty.name)) {
@@ -1138,19 +1096,15 @@ class Scope implements IVariableContainer {
     }
 
     if(this.ref.stackFrame.locals) for (const extraProperty of this.ref.stackFrame.locals) {
-        let variable = this.context.createVariable(DwarfObjectVariable, { name: extraProperty.name },
-          extraProperty.type,
-          extraProperty.address,
-          extraProperty.value,
-          extraProperty.isPrimitive,
-          extraProperty.kind,
-          extraProperty.countChildren
-        )
         variables.push(
-          // this.context.createVariable(ObjectVariable, { name: extraProperty.name }, {type: extraProperty.type, objectId: '66'}, extraProperty.value)
-          variable
-          // this.context.createVariableByType({ name: extraProperty.name }, extraProperty.value),
-          // new ObjectVariable({ name: extraProperty.name }, {type: this.remoteObject.type, objectId: 66}, extraProperty.value)
+          this.context.createVariable(DwarfObjectVariable, { name: extraProperty.name },
+            extraProperty.type,
+            extraProperty.address,
+            extraProperty.value,
+            extraProperty.isPrimitive,
+            extraProperty.kind,
+            extraProperty.countChildren
+          )
         );
     }
 

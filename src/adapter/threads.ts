@@ -46,9 +46,11 @@ import {
 
 import {
   PausedDebugSessionState,
+  clearReplBuild,
   compileReplCode,
   evaluateRepl,
-  generateSwiftStackFrameCode2
+  generateSwiftStackFrameCode2,
+  getReplFileId
 } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -1018,16 +1020,7 @@ export class Thread implements IVariableStoreLocationProvider {
       if(!frame.callFrame.location){
         return
       }
-      // if (!frame.state) {
-      //   if (!frame.statePromise) {
-      //       frame.statePromise = dwarfSessionState.dumpVariable(frame.frame);
-      //   }
-      //   frame.statePromise?.then(state => {
-      //     frame.state = state
-      //   });
-      // }
 
-      // const varlist = this.dwarfDebugSession.getVariablelistFromAddress(frame.callFrame.location.columnNumber!, frame.callFrame.location.scriptId)
       const script =  this.sourceContainer.getScriptById(frame.callFrame.location.scriptId ?? "")
       await script?.sourcePromise
       const wasmFile: WebAssemblyFile = script?.source?.outgoingSourceMap?.wasmFile
@@ -1038,11 +1031,8 @@ export class Thread implements IVariableStoreLocationProvider {
         wasmFile.dwarf.global_variable_name_list(frame.callFrame.location.columnNumber!),
         wasmFile.dwarf.variable_name_list(frame.callFrame.location.columnNumber!)
       ]
-      // frame.frame.locals = frame.locals
-      // frame.frame.scopeChain.forEach(scope => scope.locals = frame.locals)
 
       frame._name = await demangle(frame._name)
-      // frame.callFrame.functionName = await demangle(frame.callFrame.functionName) //await demangle(frame.frame.functionName)
       frame.locals = []
 
       for (const varlist of varlists) {
@@ -1101,22 +1091,6 @@ export class Thread implements IVariableStoreLocationProvider {
 
     await Promise.all(promises.filter(el=>el))
 
-    // const frame = pausedDetails.stackTrace.frames[0]
-
-
-    // let INCLUDE_DIRS = [
-    //   '/home/ubu/coding/codecad/examples/svelte-dev-app/src/swift/.build/debug',
-    //   // '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug',
-
-    //   '/home/ubu/coding/repos/wasm-js-runtime/swift/runtime/.build/debug'
-    // ].reduce((res, include) => res + " -I " + include, "")
-
-    // const IMPORTS = `
-    // //import mycode
-    // import swiftwasm
-    // // import oc
-    // //import JavaScriptKit
-    // `
     const IMPORTS = this.launchConfig.swiftReplImportDeclaration.join("\n")
     const INCLUDE_DIRS = this.launchConfig.swiftReplIncludePaths.reduce((res, include) => res + " -I " + include, "")
 
@@ -1127,17 +1101,15 @@ export class Thread implements IVariableStoreLocationProvider {
       swiftVars.push(...frame.locals)
     }
 
-    // let INCLUDE_DIR = '/home/ubu/coding/repos/vscode-js-debug/testWorkspace/viteHotreload/src/lib/swift/.build/debug'
     repl: if(swiftVars.length){
       console.time("repl")
       console.time("compiling repl code")
-      // let swiftVars = frame.locals
 
-      writeFileSync(".repl/repl_temp.swift", generateSwiftStackFrameCode2(swiftVars, IMPORTS))
-      let error = await compileReplCode(".repl/repl_temp.swift", INCLUDE_DIRS)
+      let fileId = getReplFileId()
+      writeFileSync(`.repl/repl_temp${fileId}.swift`, generateSwiftStackFrameCode2(swiftVars, IMPORTS))
+      let error = await compileReplCode(`.repl/repl_temp${fileId}.swift`, `.repl/repl_temp${fileId}.wasm`, INCLUDE_DIRS)
       if(error)
         break repl // continues after the repl: block
-
 
       console.timeEnd("compiling repl code")
 
@@ -1149,8 +1121,10 @@ export class Thread implements IVariableStoreLocationProvider {
         }
       }
 
-      var replWasmB64 = readFileSync('.repl/repl_temp.wasm', {encoding: 'base64'});
+      var replWasmB64 = readFileSync(`.repl/repl_temp${fileId}.wasm`, {encoding: 'base64'});
       let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.cdp, pausedDetails.stackTrace.frames[0]?.callFrame.callFrameId);
+
+      clearReplBuild(`.repl/repl_temp${fileId}`)
 
       let vars = []
       if(evalResult){
