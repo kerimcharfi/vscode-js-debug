@@ -815,7 +815,8 @@ class DwarfObjectVariable implements IVariable {
     public kind: string,
     public countChildren: number,
     public keyPathRoot: DwarfObjectVariable,
-    public keyPath: string = ""
+    public keyPath: string = "",
+    public keyPathDepth: number = 0,
   ) {}
 
   public get sortOrder() {
@@ -890,8 +891,10 @@ class DwarfObjectVariable implements IVariable {
     let thisVariableDump = vars[0]
     this.address = thisVariableDump.address
 
+    const parentIsOptional = this.type.startsWith("Optional<")
     for(let child of thisVariableDump.children){
-      let accessor = "." + child.name
+      let accessor = "." + child.name // ${parentIsOptional ? '!' : ''}
+      const isOptional = child.type.startsWith("Optional<")
 
       if(this.kind == "collection"){
         accessor = '[' + child.name + ']'
@@ -902,8 +905,24 @@ class DwarfObjectVariable implements IVariable {
       if(this.kind == "set"){
         accessor = '.elAt(' + child.name + ')'
       }
-      if(this.kind == "tuple"){
+      if(this.kind == "tuple" && child.name[0] == "."){
         accessor = child.name
+      }
+
+      // if(isOptional){
+      //   accessor = accessor+"!"
+      // }
+
+      if(parentIsOptional){
+        accessor = "!"
+      }
+
+      if(!this.address && child.type){
+        accessor = accessor + " as! " + child.type
+      }
+
+      if(!this.address){
+        accessor = accessor + ")"
       }
 
       result.push(
@@ -915,7 +934,8 @@ class DwarfObjectVariable implements IVariable {
             child.kind,
             child.countChildren,
             this.address ? this : this.keyPathRoot,
-            this.address ? accessor: this.keyPath + accessor
+            this.address ? accessor : this.keyPath + accessor,
+            this.address ? 0 : this.keyPathDepth + 1,
         )
       )
     }

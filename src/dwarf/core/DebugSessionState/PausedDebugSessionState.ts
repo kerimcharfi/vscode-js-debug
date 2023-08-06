@@ -510,7 +510,7 @@ export function generateSwiftChildrenDumpCode(vars, importDecl, params){
   let pointerDeref = ""
   let variableDumps = ""
 
-  for(let {context, type, address, kind, countChildren, keyPath, keyPathRoot} of vars){
+  for(let {context, type, address, kind, countChildren, keyPath, keyPathRoot, keyPathDepth} of vars){
 
     let name = context.name.replace("<", "_").replace(">", "_").replace("-", "_").replace(".", "")
     const isOptional = type.startsWith("Optional<")
@@ -523,27 +523,30 @@ export function generateSwiftChildrenDumpCode(vars, importDecl, params){
     } else if (context.parent?.address && name && context.parent.kind != "dictionary" && context.parent.kind != "set") {
       args.push(`__${name}_parent_ptr: UnsafeMutableRawPointer`)
 
-      let targetExpr = `__${name}_parent_ptr.assumingMemoryBound(to: ${context.parent.type}.self).pointee${parentIsOptional ? '!' : ''}${keyPath}${isOptional ? '!' : ''}`
+      let targetExpr = `__${name}_parent_ptr.assumingMemoryBound(to: ${context.parent.type}.self).pointee${parentIsOptional ? '!' : ''}${keyPath}`
       pointerDeref = pointerDeref
                           + `var _${name}_parent = __${name}_parent_ptr.assumingMemoryBound(to: ${context.parent.type}.self).pointee\n    `
                           + `var _${name} = ${targetExpr}\n    `
-                          + `let __${name}_ptr = Optional.some(withUnsafePointer(to: &${targetExpr}){\n      ptr in ptr\n    })\n  `
+                          + `let __${name}_ptr: UnsafePointer<Int>? = Optional.none\n  `
+                          // + `let __${name}_ptr = Optional.some(withUnsafePointer(to: &${targetExpr}){\n      ptr in ptr\n    })\n  `
 
     } else if (keyPathRoot && keyPath){
       args.push(`__${name}_root_ptr: UnsafeMutableRawPointer`)
+      let prefix = "(".repeat(keyPathDepth)
       pointerDeref = pointerDeref
         + `var _${name}_root = __${name}_root_ptr.assumingMemoryBound(to: ${keyPathRoot.type}.self).pointee\n    `
-        + `var _${name} = _${name}_root${keyPath}\n    `
+        + `var _${name} = ${prefix}_${name}_root${keyPath}\n    `
         + `let __${name}_ptr: UnsafePointer<Int>? = Optional.none\n  `
     } else {
       console.error("variable has no address nor parent")
     }
 
     // variableDumps = variableDumps + `Variable(name: "${name}", type: "${type}", value: "\\(${name})"),\n      `
+
     if(kind == 'enum'){
       variableDumps = variableDumps + `Variable(children: [dumpVariable(_${name}.rawValue, "rawValue")], address: 0),\n      `
     } else {
-      variableDumps = variableDumps + `dumpVariablesChildren(&_${name}, __${name}_ptr != nil ? Int(bitPattern:__${name}_ptr!) : 0, ${params.start ?? 0}, ${params.count ?? countChildren}),\n      `
+      variableDumps = variableDumps + `dumpVariablesChildren(&_${name}, __${name}_ptr != nil ? Int(bitPattern:__${name}_ptr!) : 0, ${params.start ?? 0}, ${params.count ?? 99}),\n      `
     }
   }
 
