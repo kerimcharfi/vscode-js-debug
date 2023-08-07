@@ -1,0 +1,20 @@
+{
+  "name": "wasm-dwarf-alanyser",
+  "collaborators": [
+    "kamenokonokotan <kamenokonokotan@gmail.com>"
+  ],
+  "description": "WebAssembly DWARF alanyser",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nokotan/cdp-gdb-bridge"
+  },
+  "files": [
+    "index_bg.wasm",
+    "index.js",
+    "index.d.ts"
+  ],
+  "main": "index.js",
+  "types": "index.d.ts"
+}

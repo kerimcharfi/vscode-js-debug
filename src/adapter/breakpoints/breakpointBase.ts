@@ -8,14 +8,15 @@ import { absolutePathToFileUrl, urlToRegex } from '../../common/urlUtils';
 import Dap from '../../dap/api';
 import { BreakpointManager } from '../breakpoints';
 import {
-  base1To0,
-  ISourceScript,
   IUiLocation,
+  Script,
   Source,
   SourceFromMap,
+  SourceFromScript,
+  base1To0,
   uiToRawOffset,
 } from '../sources';
-import { Script, Thread } from '../threads';
+import { Thread } from '../threads';
 
 export type LineColumn = { lineNumber: number; columnNumber: number }; // 1-based
 
@@ -187,21 +188,22 @@ export abstract class Breakpoint {
 
     this.isEnabled = true;
     const promises: Promise<void>[] = [this._setPredicted(thread)];
-    const source = this._manager._sourceContainer.source(this.source);
-    if (!source || !(source instanceof SourceFromMap)) {
-      promises.push(
-        // For breakpoints set before launch, we don't know whether they are in a compiled or
-        // a source map source. To make them work, we always set by url to not miss compiled.
-        // Additionally, if we have two sources with the same url, but different path (or no path),
-        // this will make breakpoint work in all of them.
-        this._setByPath(thread, uiToRawOffset(this.originalPosition, source?.runtimeScriptOffset)),
-      );
-    }
+    let source = this._manager._sourceContainer.source(this.source);
+    // if (!source || !(source instanceof SourceFromMap)) {
+    //   promises.push(
+    //     // For breakpoints set before launch, we don't know whether they are in a compiled or
+    //     // a source map source. To make them work, we always set by url to not miss compiled.
+    //     // Additionally, if we have two sources with the same url, but different path (or no path),
+    //     // this will make breakpoint work in all of them.
+    //     this._setByPath(thread, uiToRawOffset(this.originalPosition, source?.runtimeScriptOffset)),
+    //   );
+    // }
 
     await Promise.all(promises);
-
+    source = this._manager._sourceContainer.source(this.source);
     // double check still enabled to avoid racing
     if (source && this.isEnabled) {
+      // .currentSiblingUiLocations uses sourcemaps to find location in compiled files
       const uiLocations = this._manager._sourceContainer.currentSiblingUiLocations({
         lineNumber: this.originalPosition.lineNumber,
         columnNumber: this.originalPosition.columnNumber,
@@ -234,7 +236,7 @@ export abstract class Breakpoint {
 
     const uiLocation = (
       await Promise.all(
-        resolvedLocations.map(l => thread.rawLocationToUiLocation(thread.rawLocation(l))),
+        resolvedLocations.map(l => thread.scriptLocationToUiLocation(thread.scriptLocation(l))),
       )
     ).find(l => !!l);
 
@@ -288,30 +290,37 @@ export abstract class Breakpoint {
   }
 
   public async updateForSourceMap(thread: Thread, script: Script) {
-    const source = this._manager._sourceContainer.source(this.source);
+    // const source = this._manager._sourceContainer.source(this.source);
+    let source
+    if(this.source instanceof Source){
+      source = this._manager._sourceContainer.getSourceByAbsolutePath(this.source.absolutePath);
+    }
+    if (!source) {
+      source = this._manager._sourceContainer.source(this.source);
+    }
     if (!source) {
       return [];
     }
 
     // Find all locations for this breakpoint in the new script.
     const scriptSource = await script.source;
-    const uiLocations = this._manager._sourceContainer.currentSiblingUiLocations(
+    const compiledLocations = this._manager._sourceContainer.getCompiledLocationsFromSource(
       {
         lineNumber: this.originalPosition.lineNumber,
         columnNumber: this.originalPosition.columnNumber,
         source,
       },
-      scriptSource,
+      scriptSource
     );
 
-    if (!uiLocations.length) {
+    if (!compiledLocations.length) {
       return [];
     }
 
     const promises: Promise<void>[] = [];
-    for (const uiLocation of uiLocations) {
+    for (const location of compiledLocations) {
       promises.push(
-        this._setByScriptId(thread, script, uiToRawOffset(uiLocation, source.runtimeScriptOffset)),
+        this._setByScriptId(thread, script, uiToRawOffset(location, source.runtimeScriptOffset)),
       );
     }
 
@@ -330,7 +339,7 @@ export abstract class Breakpoint {
       // Don't remove if we just set at the same location: https://github.com/microsoft/vscode/issues/102152
       const args = bp.args;
       if (
-        uiLocations.some(
+        compiledLocations.some(
           l => l.columnNumber - 1 === args.columnNumber && l.lineNumber - 1 === args.lineNumber,
         )
       ) {
@@ -349,7 +358,7 @@ export abstract class Breakpoint {
 
     await Promise.all(promises);
 
-    return uiLocations;
+    return compiledLocations;
   }
 
   /**
@@ -459,9 +468,11 @@ export abstract class Breakpoint {
   }
 
   private async _setByUiLocation(thread: Thread, uiLocation: IUiLocation): Promise<void> {
-    await Promise.all(
-      uiLocation.source.scripts.map(script => this._setByScriptId(thread, script, uiLocation)),
-    );
+    if(uiLocation.source instanceof SourceFromScript){
+      await Promise.all(
+        [...uiLocation.source.scriptByExecutionContext.values()].map(script => this._setByScriptId(thread, script, uiLocation)),
+      );
+    }
   }
 
   protected async _setByPath(thread: Thread, lineColumn: LineColumn): Promise<void> {
@@ -480,10 +491,11 @@ export abstract class Breakpoint {
     }
 
     if (this.source.path) {
-      const urlRegexp =
+      let urlRegexp =
         await this._manager._sourceContainer.sourcePathResolver.absolutePathToUrlRegexp(
           this.source.path,
         );
+      urlRegexp = urlRegexp?.replace('($|?)', '');
       if (!urlRegexp) {
         return;
       }
@@ -510,7 +522,7 @@ export abstract class Breakpoint {
    * requests to avoid triggering any logpoint breakpoints multiple times,
    * as would happen if we set a breakpoint both by script and URL.
    */
-  protected hasSetOnLocation(script: ISourceScript, lineColumn: LineColumn) {
+  protected hasSetOnLocation(script: Script, lineColumn: LineColumn) {
     return this.cdpBreakpoints.find(
       bp =>
         (script.scriptId &&
@@ -573,7 +585,7 @@ export abstract class Breakpoint {
 
   private async _setByScriptId(
     thread: Thread,
-    script: ISourceScript,
+    script: Script,
     lineColumn: LineColumn,
   ): Promise<void> {
     lineColumn = base1To0(lineColumn);
@@ -615,16 +627,18 @@ export abstract class Breakpoint {
       deadletter: false,
     };
 
+    //TODO: sourcemap using breakpoints
+
     state.done = (async () => {
       const result = isSetByLocation(args)
-        ? await thread.cdp().Debugger.setBreakpoint(args)
-        : await thread.cdp().Debugger.setBreakpointByUrl(args);
+        ? await thread.cdp.Debugger.setBreakpoint(args)
+        : await thread.cdp.Debugger.setBreakpointByUrl(args);
       if (!result) {
         return;
       }
 
       if (state.deadletter) {
-        await thread.cdp().Debugger.removeBreakpoint({ breakpointId: result.breakpointId });
+        await thread.cdp.Debugger.removeBreakpoint({ breakpointId: result.breakpointId });
         return;
       }
 
@@ -660,7 +674,7 @@ export abstract class Breakpoint {
       await breakpoint.done;
     } else {
       await this._manager._thread
-        ?.cdp()
+        ?.cdp
         .Debugger.removeBreakpoint({ breakpointId: breakpoint.cdpId });
       this._manager._resolvedBreakpoints.delete(breakpoint.cdpId);
     }

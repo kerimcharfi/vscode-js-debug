@@ -4,6 +4,7 @@
 
 import * as l10n from '@vscode/l10n';
 import { generate } from 'astring';
+import { readFileSync, writeFileSync } from 'fs';
 import { inject, injectable } from 'inversify';
 import Cdp from '../cdp/api';
 import { ICdpApi } from '../cdp/connection';
@@ -15,11 +16,12 @@ import Dap from '../dap/api';
 import { IDapApi } from '../dap/connection';
 import * as errors from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
+import { clearReplBuild, compileReplCode, evaluateRepl, generateSwiftChildrenDumpCode, getReplFileId } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 import * as objectPreview from './objectPreview';
 import { MapPreview, SetPreview } from './objectPreview/betterTypes';
 import { PreviewContextType } from './objectPreview/contexts';
 import { StackFrame, StackTrace } from './stackTrace';
-import { getSourceSuffix, RemoteException, RemoteObjectId } from './templates';
+import { RemoteException, RemoteObjectId, getSourceSuffix } from './templates';
 import { getArrayProperties } from './templates/getArrayProperties';
 import { getArraySlots } from './templates/getArraySlots';
 import {
@@ -226,6 +228,12 @@ class VariableContext {
     c: C,
   ): InstanceType<T>;
 
+  public createVariable(
+    ctor: typeof DwarfObjectVariable,
+    ctx: IContextInit,
+    ...rest: any
+  ): DwarfObjectVariable
+
   public createVariable<T extends VariableCtor>(
     ctor: T,
     ctx: IContextInit,
@@ -250,6 +258,8 @@ class VariableContext {
 
     return v;
   }
+
+
 
   public createVariableByType(
     ctx: IContextInit,
@@ -590,7 +600,8 @@ class Variable implements IVariable {
   ): Promise<Dap.Variable> {
     let name = this.context.name;
     if (this.context.parent instanceof Scope) {
-      name = await this.context.parent.getRename(name);
+      // TODO: enable again
+      // name = await this.context.parent.getRename(name);
     }
 
     return Promise.resolve({
@@ -839,6 +850,147 @@ class ObjectVariable extends Variable implements IMemoryReadable {
   }
 }
 
+class DwarfObjectVariable implements IVariable {
+  public id = getVariableId();
+
+  constructor(
+    public context: VariableContext,
+    public type: string,
+    public address: number,
+    public customStringRepr: string | undefined,
+    public isPrimitive: boolean,
+    public kind: string,
+    public countChildren: number,
+    public keyPathRoot: DwarfObjectVariable,
+    public keyPath: string = "",
+    public keyPathDepth: number = 0,
+  ) {}
+
+  public get sortOrder() {
+    return this.context.sortOrder;
+  }
+
+  public async toDap(
+    previewContext: PreviewContextType,
+    valueFormat?: Dap.ValueFormat,
+  ): Promise<Dap.Variable> {
+    return {
+      name: this.context.name,
+      presentationHint: this.context.presentationHint,
+      type: this.type,
+      variablesReference: this.isPrimitive ? 0 : this.id,
+      indexedVariables: this.countChildren > 100 ? this.countChildren : undefined,
+      namedVariables: this.kind == "collection" && this.countChildren > 100 ? 1 : undefined, // do not count properties proactively
+
+      // memoryReference: memoryReadableTypes.has(this.remoteObject.subtype)
+      //   ? String(this.id)
+      //   : undefined,
+      value: this.customStringRepr?.toString() || this.type,
+    };
+  }
+
+  public async getChildren(_params: Dap.VariablesParamsExtended) : Promise<IVariable[]>{
+    let result = [] as IVariable[]
+    // adding .count property to collections, sets, dicts
+    if(_params.filter != "indexed" && (this.kind === "collection" || this.kind === "set" || this.kind === "dictionary")){
+      result.push(
+        this.context.createVariable(DwarfObjectVariable, { name: "count" },
+          "Int",
+          undefined, // address
+          this.countChildren.toString(), // value
+          true,      //.isPrimitive
+      )
+      )
+    }
+    // if this has too many children, the paged mechanism is used
+    if(this.kind === "collection" && this.countChildren > 100 && _params.start == undefined){
+      return result
+    }
+
+    const IMPORTS = this.context.locationProvider.launchConfig.swiftReplImportDeclaration.join("\n")
+    const INCLUDE_DIRS = this.context.locationProvider.launchConfig.swiftReplIncludePaths.reduce((res, include) => res + " -I " + include, "")
+
+    console.time("compiling repl code")
+    let fileId = getReplFileId()
+    writeFileSync(`.repl/repl_temp${fileId}.swift`, generateSwiftChildrenDumpCode([this], IMPORTS, _params))
+    let error = await compileReplCode(`.repl/repl_temp${fileId}.swift`, `.repl/repl_temp${fileId}.wasm`, INCLUDE_DIRS)
+
+    console.timeEnd("compiling repl code")
+
+    const args = [this.address || this.context.parent?.address || this.keyPathRoot?.address]
+
+    var replWasmB64 = readFileSync(`.repl/repl_temp${fileId}.wasm`, {encoding: 'base64'});
+    let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.context.cdp);
+
+    clearReplBuild(`.repl/repl_temp${fileId}`)
+
+    let vars = []
+    if(evalResult){
+      try{
+        vars = JSON.parse(evalResult)
+      } catch(e) {
+        console.error(e)
+      }
+    }
+
+    if(!vars.length)
+      return result
+    let thisVariableDump = vars[0]
+    this.address = thisVariableDump.address
+
+    const parentIsOptional = this.type.startsWith("Optional<")
+    for(let child of thisVariableDump.children){
+      let accessor = "." + child.name // ${parentIsOptional ? '!' : ''}
+      const isOptional = child.type.startsWith("Optional<")
+
+      if(this.kind == "collection"){
+        accessor = '[' + child.name + ']'
+      }
+      if(this.kind == "dictionary"){
+        accessor = '.elAt(' + child.name + ')'
+      }
+      if(this.kind == "set"){
+        accessor = '.elAt(' + child.name + ')'
+      }
+      if(this.kind == "tuple" && child.name[0] == "."){
+        accessor = child.name
+      }
+
+      // if(isOptional){
+      //   accessor = accessor+"!"
+      // }
+
+      if(parentIsOptional){
+        accessor = "!"
+      }
+
+      if(!this.address && child.type){
+        accessor = accessor + " as! " + child.type
+      }
+
+      if(!this.address){
+        accessor = accessor + ")"
+      }
+
+      result.push(
+        this.context.createVariable(DwarfObjectVariable, { name: child.name },
+            child.type,
+            undefined, // address
+            child.value,
+            !!(child.value=='nil'),      //.isPrimitive
+            child.kind,
+            child.countChildren,
+            this.address ? this : this.keyPathRoot,
+            this.address ? accessor : this.keyPath + accessor,
+            this.address ? 0 : this.keyPathDepth + 1,
+        )
+      )
+    }
+
+    return result
+  }
+}
+
 const entriesVariableName = '[[Entries]]';
 
 class SetOrMapVariable extends ObjectVariable {
@@ -1037,7 +1189,7 @@ class Scope implements IVariableContainer {
   ) {}
 
   public async getChildren(_params: Dap.VariablesParams): Promise<Variable[]> {
-    const variables = await this.context.createObjectPropertyVars(this.remoteObject);
+    const variables: IVariable[] = await this.context.createObjectPropertyVars(this.remoteObject);
     const existing = new Set(variables.map(v => v.name));
     for (const extraProperty of this.extraProperties) {
       if (!existing.has(extraProperty.name)) {
@@ -1045,6 +1197,19 @@ class Scope implements IVariableContainer {
           this.context.createVariableByType({ name: extraProperty.name }, extraProperty.value),
         );
       }
+    }
+
+    if(this.ref.stackFrame.locals) for (const extraProperty of this.ref.stackFrame.locals) {
+        variables.push(
+          this.context.createVariable(DwarfObjectVariable, { name: extraProperty.name },
+            extraProperty.type,
+            extraProperty.address,
+            extraProperty.value,
+            extraProperty.isPrimitive,
+            extraProperty.kind,
+            extraProperty.countChildren
+          )
+        );
     }
 
     return variables;

@@ -18,6 +18,7 @@ import * as urlUtils from '../../common/urlUtils';
 import { AnyLaunchConfiguration, AnyNodeConfiguration } from '../../configuration';
 import { ILinkedBreakpointLocation } from '../../ui/linkedBreakpointLocation';
 import { ISourcePathResolverOptions, SourcePathResolverBase } from '../sourcePathResolver';
+import { DwarfSourceMap } from '../../adapter/sources';
 
 interface IOptions extends ISourcePathResolverOptions {
   basePath?: string;
@@ -70,6 +71,10 @@ export class NodeSourcePathResolver extends SourcePathResolverBase<IOptions> {
    * @override
    */
   public async urlToAbsolutePath({ url, map }: IUrlResolution): Promise<string | undefined> {
+    if(map instanceof DwarfSourceMap){
+      return url
+    }
+
     url = this.normalizeSourceMapUrl(url);
 
     // Allow debugging of externally loaded Node internals

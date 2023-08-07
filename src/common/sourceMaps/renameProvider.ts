@@ -3,13 +3,14 @@
  *--------------------------------------------------------*/
 
 import { inject, injectable } from 'inversify';
-import { ISourceWithMap, Source, SourceFromMap } from '../../adapter/sources';
+import { Source, SourceFromMap } from '../../adapter/sources';
 import { StackFrame } from '../../adapter/stackTrace';
 import { AnyLaunchConfiguration } from '../../configuration';
 import { Base01Position, IPosition } from '../positions';
 import { PositionToOffset } from '../stringUtils';
-import { SourceMap } from './sourceMap';
-import { ISourceMapFactory } from './sourceMapFactory';
+// import { SourceMap } from './sourceMap';
+// import { ISourceMapFactory } from './sourceMapFactory';
+import { ISourceMapFactory, SourceMap } from "../../adapter/sources";
 
 interface IRename {
   original: string;
@@ -64,7 +65,7 @@ export class RenameProvider implements IRenameProvider {
   /**
    * @inheritdoc
    */
-  public provideForSource(source: Source | undefined) {
+  public provideForSource(source: Source | undefined): RenameMapping | Promise<RenameMapping> {
     if (!this.launchConfig.sourceMapRenames) {
       return RenameMapping.None;
     }
@@ -73,7 +74,7 @@ export class RenameProvider implements IRenameProvider {
       return RenameMapping.None;
     }
 
-    const original: ISourceWithMap | undefined = source.compiledToSourceUrl.keys().next().value;
+    const original: Source | undefined = source.compiledToSourceUrl.keys().next().value;
     if (!original) {
       throw new Error('unreachable');
     }
@@ -83,20 +84,40 @@ export class RenameProvider implements IRenameProvider {
       return cached;
     }
 
-    const promise = this.sourceMapFactory
-      .load(original.sourceMap.metadata)
-      .then(async sm => {
-        if (!sm?.hasNames) {
-          return RenameMapping.None;
-        }
+    if(!original.outgoingSourceMap){
+      console.log("no outgoing source map")
+      throw RenameMapping.None;
+    }
 
-        const content = await original.content();
-        return content ? this.createFromSourceMap(sm, content) : RenameMapping.None;
-      })
-      .catch(() => RenameMapping.None);
+    const promise = original.outgoingSourceMap.finishLoading
+    .then(async _ => {
+      const sm = original.outgoingSourceMap
+      if (!sm?.hasNames) {
+        return RenameMapping.None;
+      }
+
+      const content = await original.content();
+      return content ? this.createFromSourceMap(sm, content) : RenameMapping.None;
+    })
+    .catch(() => RenameMapping.None);
 
     this.renames.set(original.url, promise);
     return promise;
+
+    // const promise = this.sourceMapFactory
+    //   .load(original.sourceMap.metadata)
+    //   .then(async sm => {
+    //     if (!sm?.hasNames) {
+    //       return RenameMapping.None;
+    //     }
+
+    //     const content = await original.content();
+    //     return content ? this.createFromSourceMap(sm, content) : RenameMapping.None;
+    //   })
+    //   .catch(() => RenameMapping.None);
+
+    // this.renames.set(original.url, promise);
+    // return promise;
   }
 
   private createFromSourceMap(sourceMap: SourceMap, content: string) {

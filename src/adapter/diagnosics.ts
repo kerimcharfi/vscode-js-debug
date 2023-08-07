@@ -6,7 +6,7 @@ import { inject, injectable } from 'inversify';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mapValues } from '../common/objUtils';
-import { ISourceMapMetadata } from '../common/sourceMaps/sourceMap';
+// import { ISourceMapMetadata } from '../common/sourceMaps/sourceMap';
 import { AnyLaunchConfiguration } from '../configuration';
 import Dap from '../dap/api';
 import { toolPath, toolStylePath } from '../diagnosticTool';
@@ -18,7 +18,7 @@ import {
   IBreakpointCdpReferenceApplied,
   IBreakpointCdpReferencePending,
 } from './breakpoints/breakpointBase';
-import { IUiLocation, SourceContainer, SourceFromMap } from './sources';
+import { ISourceMapMetadata, IUiLocation, SourceContainer, SourceFromMap, SourceFromScript } from './sources';
 
 export interface IDiagnosticSource {
   uniqueId: number;
@@ -148,11 +148,11 @@ export class Diagnostics {
                   ([k, v]) => [k.sourceReference, v] as [number, string],
                 )
               : undefined,
-          sourceMap: source.sourceMap && {
-            url: source.sourceMap.url,
-            metadata: source.sourceMap.metadata,
+          sourceMap: source.outgoingSourceMap && {
+            url: source.outgoingSourceMap.url,
+            metadata: source.outgoingSourceMap.metadata,
             sources: mapValues(
-              Object.fromEntries(source.sourceMap.sourceByUrl),
+              Object.fromEntries(source.outgoingSourceMap.sourceByUrl),
               v => v.sourceReference,
             ),
           },

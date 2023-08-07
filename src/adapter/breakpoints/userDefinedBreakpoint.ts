@@ -74,7 +74,7 @@ export class UserDefinedBreakpoint extends Breakpoint {
    */
   public async toDap(): Promise<Dap.Breakpoint> {
     const location = this.enabled && this.getResolvedUiLocation();
-    if (location) {
+    if (location && location.source) {
       return {
         id: this.dapId,
         verified: true,

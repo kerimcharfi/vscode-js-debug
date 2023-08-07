@@ -46,7 +46,7 @@ import { StatefulResourceProvider } from './adapter/resourceProvider/statefulRes
 import { ScriptSkipper } from './adapter/scriptSkipper/implementation';
 import { IScriptSkipper } from './adapter/scriptSkipper/scriptSkipper';
 import { SmartStepper } from './adapter/smartStepping';
-import { SourceContainer } from './adapter/sources';
+import { CachingSourceMapFactory, IRootSourceMapFactory, ISourceMapFactory, SourceContainer, SourceMapFactory } from './adapter/sources';
 import { IVueFileMapper, VueFileMapper } from './adapter/vueFileMapper';
 import Cdp from './cdp/api';
 import { ICdpApi } from './cdp/connection';
@@ -56,14 +56,8 @@ import { OutFiles, VueComponentPaths } from './common/fileGlobList';
 import { IFsUtils, LocalAndRemoteFsUtils, LocalFsUtils } from './common/fsUtils';
 import { ILogger } from './common/logging';
 import { Logger } from './common/logging/logger';
-import { createMutableLaunchConfig, MutableLaunchConfig } from './common/mutableLaunchConfig';
+import { MutableLaunchConfig, createMutableLaunchConfig } from './common/mutableLaunchConfig';
 import { IRenameProvider, RenameProvider } from './common/sourceMaps/renameProvider';
-import {
-  CachingSourceMapFactory,
-  IRootSourceMapFactory,
-  ISourceMapFactory,
-  SourceMapFactory,
-} from './common/sourceMaps/sourceMapFactory';
 import { ISearchStrategy } from './common/sourceMaps/sourceMapRepository';
 import { TurboSearchStrategy } from './common/sourceMaps/turboSearchStrategy';
 import { ISourcePathResolver } from './common/sourcePathResolver';

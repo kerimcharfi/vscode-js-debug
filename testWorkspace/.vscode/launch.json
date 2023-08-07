@@ -1,0 +1,88 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "chrome",
+            "request": "launch",
+            "name": "Launch Chrome against localhost",
+            "url": "http://localhost:5173/swift",
+            "runtimeExecutable": "/usr/bin/google-chrome-beta",
+            "webRoot": "${workspaceFolder}/viteHotreload"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Debug swiftwasm (viteHotreload/src/lib/swift)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift/.build/debug/swiftwasm",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift",
+            "preLaunchTask": "swift: Build Debug swiftwasm (viteHotreload/src/lib/swift)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Release swiftwasm (viteHotreload/src/lib/swift)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift/.build/release/swiftwasm",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift",
+            "preLaunchTask": "swift: Build Release swiftwasm (viteHotreload/src/lib/swift)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Debug repl (viteHotreload/src/lib/repl)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/repl/.build/debug/repl",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/repl",
+            "preLaunchTask": "swift: Build Debug repl (viteHotreload/src/lib/repl)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Release repl (viteHotreload/src/lib/repl)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/repl/.build/release/repl",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/repl",
+            "preLaunchTask": "swift: Build Release repl (viteHotreload/src/lib/repl)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Debug mycode (viteHotreload/src/lib/swift)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift/.build/debug/mycode",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift",
+            "preLaunchTask": "swift: Build Debug mycode (viteHotreload/src/lib/swift)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "sourceLanguages": [
+                "swift"
+            ],
+            "name": "Release mycode (viteHotreload/src/lib/swift)",
+            "program": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift/.build/release/mycode",
+            "args": [],
+            "cwd": "${workspaceFolder:testWorkspace}/viteHotreload/src/lib/swift",
+            "preLaunchTask": "swift: Build Release mycode (viteHotreload/src/lib/swift)"
+        }
+    ]
+}

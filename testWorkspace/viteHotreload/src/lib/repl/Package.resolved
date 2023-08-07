@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "swift-extras-json",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swift-extras/swift-extras-json.git",
+      "state" : {
+        "revision" : "122b9454ef01bf89a4c190b8fd3717ddd0a2fbd0",
+        "version" : "0.6.0"
+      }
+    }
+  ],
+  "version" : 2
+}

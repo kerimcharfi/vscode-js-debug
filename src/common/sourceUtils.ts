@@ -17,7 +17,7 @@ import {
 import { NullablePosition, Position, SourceMapConsumer, SourceMapGenerator } from 'source-map';
 import { LineColumn } from '../adapter/breakpoints/breakpointBase';
 import { acornOptions, parseProgram } from './sourceCodeManipulations';
-import { SourceMap } from './sourceMaps/sourceMap';
+import { SourceMap } from '../adapter/sources';
 
 export const enum SourceConstants {
   /**

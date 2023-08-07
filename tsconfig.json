@@ -19,5 +19,6 @@
     "jsxFactory": "h",
     "types": ["node", "chai-subset", "chai-as-promised", "mocha"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/dwarf/core/DebugSession.ts", "src/dwarf/core/DebugAdapterInterface.ts", "src/dwarf/core/DebugSessionState"]
 }

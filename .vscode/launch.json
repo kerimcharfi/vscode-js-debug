@@ -21,7 +21,6 @@
       "args": [
         "4711"
       ]
-      // "preLaunchTask": "npm: watch"
     },
     {
       "type": "node",
@@ -35,7 +34,6 @@
       "skipFiles": [
         "<node_internals>/**/*.js"
       ]
-      // "preLaunchTask": "npm: watch"
     },
     {
       "type": "node",
@@ -49,7 +47,6 @@
       "skipFiles": [
         "<node_internals>/**/*.js"
       ]
-      // "preLaunchTask": "npm: watch"
     },
     {
       "type": "node",
@@ -60,7 +57,6 @@
       "skipFiles": [
         "<node_internals>/**/*.js"
       ]
-      // "preLaunchTask": "npm: watch"
     },
     {
       "name": "Extension",
@@ -71,12 +67,11 @@
       ],
       "args": [
         "--enable-proposed-api=ms-vscode.js-debug",
-        "--extensionDevelopmentPath=${workspaceFolder}/dist",
+        "--extensionDevelopmentPath=${workspaceFolder}/dist"
       ],
       "outFiles": [
-        "${workspaceFolder}/dist/**/*.js",
+        "${workspaceFolder}/dist/**/*.js"
       ]
-      // "preLaunchTask": "npm: watch"
     },
     {
       "name": "Extension With Local DAP",
@@ -87,15 +82,14 @@
       ],
       "args": [
         "--enable-proposed-api=ms-vscode.js-debug",
-        "--extensionDevelopmentPath=${workspaceFolder}/dist",
+        "--extensionDevelopmentPath=${workspaceFolder}/dist"
       ],
       "env": {
         "JS_DEBUG_USE_LOCAL_DAP_PORT": "8123"
       },
       "outFiles": [
-        "${workspaceFolder}/dist/**/*.js",
+        "${workspaceFolder}/dist/**/*.js"
       ]
-      // "preLaunchTask": "npm: watch"
     },
     {
       "name": "Extension and Auto Launch",
@@ -184,6 +178,78 @@
       "args": [
         "move-bundle-files"
       ]
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Debug swiftwasm (testWorkspace\\viteHotreload\\src\\lib\\swift)",
+      "program": "${workspaceFolder:vscode-js-debug}\\testWorkspace\\viteHotreload\\src\\lib\\swift\\.build/debug/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/testWorkspace\\viteHotreload\\src\\lib\\swift",
+      "preLaunchTask": "swift: Build Debug swiftwasm (testWorkspace\\viteHotreload\\src\\lib\\swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Release swiftwasm (testWorkspace\\viteHotreload\\src\\lib\\swift)",
+      "program": "${workspaceFolder:vscode-js-debug}\\testWorkspace\\viteHotreload\\src\\lib\\swift\\.build/release/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/testWorkspace\\viteHotreload\\src\\lib\\swift",
+      "preLaunchTask": "swift: Build Release swiftwasm (testWorkspace\\viteHotreload\\src\\lib\\swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Debug swiftwasm (testWorkspace/viteHotreload/src/lib/swift)",
+      "program": "${workspaceFolder:vscode-js-debug}/testWorkspace/viteHotreload/src/lib/swift/.build/debug/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/testWorkspace/viteHotreload/src/lib/swift",
+      "preLaunchTask": "swift: Build Debug swiftwasm (testWorkspace/viteHotreload/src/lib/swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Release swiftwasm (testWorkspace/viteHotreload/src/lib/swift)",
+      "program": "${workspaceFolder:vscode-js-debug}/testWorkspace/viteHotreload/src/lib/swift/.build/release/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/testWorkspace/viteHotreload/src/lib/swift",
+      "preLaunchTask": "swift: Build Release swiftwasm (testWorkspace/viteHotreload/src/lib/swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Debug swiftwasm (src/dwarf/swift)",
+      "program": "${workspaceFolder:vscode-js-debug}/src/dwarf/swift/.build/debug/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/src/dwarf/swift",
+      "preLaunchTask": "swift: Build Debug swiftwasm (src/dwarf/swift)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "sourceLanguages": [
+        "swift"
+      ],
+      "name": "Release swiftwasm (src/dwarf/swift)",
+      "program": "${workspaceFolder:vscode-js-debug}/src/dwarf/swift/.build/release/swiftwasm",
+      "args": [],
+      "cwd": "${workspaceFolder:vscode-js-debug}/src/dwarf/swift",
+      "preLaunchTask": "swift: Build Release swiftwasm (src/dwarf/swift)"
     }
   ]
 }

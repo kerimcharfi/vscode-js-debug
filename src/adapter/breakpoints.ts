@@ -8,7 +8,7 @@ import { ILogger, LogTag } from '../common/logging';
 import { bisectArray, flatten } from '../common/objUtils';
 import { IPosition } from '../common/positions';
 import { delay } from '../common/promiseUtil';
-import { SourceMap } from '../common/sourceMaps/sourceMap';
+// import { SourceMap } from '../common/sourceMaps/sourceMap';
 import * as urlUtils from '../common/urlUtils';
 import { AnyLaunchConfiguration, IChromiumBaseConfiguration } from '../configuration';
 import Dap from '../dap/api';
@@ -26,17 +26,18 @@ import { PatternEntryBreakpoint } from './breakpoints/patternEntrypointBreakpoin
 import { UserDefinedBreakpoint } from './breakpoints/userDefinedBreakpoint';
 import { DiagnosticToolSuggester } from './diagnosticToolSuggester';
 import {
-  ISourceWithMap,
   IUiLocation,
+  ScriptWithSourceMapHandler,
   Source,
   SourceContainer,
+  SourceFromScript,
+  SourceMap,
   base0To1,
   base1To0,
-  isSourceWithMap,
   rawToUiOffset,
-  uiToRawOffset,
+  uiToRawOffset
 } from './sources';
-import { ScriptWithSourceMapHandler, Thread } from './threads';
+import { Thread } from './threads';
 
 /**
  * Differential result used internally in setBreakpoints.
@@ -187,8 +188,8 @@ export class BreakpointManager {
           for (const breakpoint of byRef || [])
             todo.push(breakpoint.updateForSourceMap(this._thread, script));
 
-          if (source.sourceMap) {
-            queue.push(source.sourceMap.sourceByUrl.values());
+          if (source.outgoingSourceMap) {
+            queue.push(source.outgoingSourceMap.sourceByUrl.values());
           }
         }
       }
@@ -351,15 +352,15 @@ export class BreakpointManager {
       // Only take the last script that matches this source. The breakpoints
       // are all coming from the same source code, so possible breakpoints
       // at one location where this source is present should match every other.
-      const lsrc = start.source;
-      if (!lsrc.scripts.length) {
+      const lsrc: Source | SourceFromScript = start.source;
+      if (!(lsrc instanceof SourceFromScript) || !lsrc.scripts?.size) {
         continue;
       }
 
-      const { scriptId } = lsrc.scripts[lsrc.scripts.length - 1];
+      const { scriptId } = lsrc.scripts.next().value;
       todo.push(
         thread
-          .cdp()
+          .cdp
           .Debugger.getPossibleBreakpoints({
             restrictToFunction: false,
             start: { scriptId, ...uiToRawOffset(base1To0(start), lsrc.runtimeScriptOffset) },
@@ -396,7 +397,7 @@ export class BreakpointManager {
    */
   public setThread(thread: Thread) {
     this._thread = thread;
-    this._thread.cdp().Debugger.on('breakpointResolved', event => {
+    this._thread.cdp.Debugger.on('breakpointResolved', event => {
       const breakpoint = this._resolvedBreakpoints.get(event.breakpointId);
       if (breakpoint) {
         breakpoint.updateUiLocations(thread, event.breakpointId, [event.location]);
@@ -404,12 +405,12 @@ export class BreakpointManager {
     });
 
     this._thread.setSourceMapDisabler(breakpointIds => {
-      const sources: ISourceWithMap[] = [];
+      const sources: Source[] = [];
       for (const id of breakpointIds) {
         const breakpoint = this._resolvedBreakpoints.get(id);
         if (breakpoint) {
           const source = this._sourceContainer.source(breakpoint.source);
-          if (isSourceWithMap(source)) sources.push(source);
+          if (source?.outgoingSourceMap) sources.push(source);
         }
       }
       return sources;
@@ -515,7 +516,14 @@ export class BreakpointManager {
     // it doesn't exist, they were probably from a previous section. The
     // references for scripts just auto-increment per session and are entirely
     // ephemeral. Remove the reference so that we fall back to a path if possible.
-    const containedSource = this._sourceContainer.source(params.source);
+    // .source tries to get the Source Object by reference first and then by path
+
+    let containedSource: Source | undefined = this._sourceContainer.getSourceMapSourcesByUrl(
+      urlUtils.absolutePathToFileUrl(params.source.path ?? ''),
+    );
+    if (!containedSource) {
+      containedSource = this._sourceContainer.source(params.source);
+    }
     if (
       params.source.sourceReference /* not (undefined or 0=on disk) */ &&
       params.source.path &&
@@ -560,7 +568,7 @@ export class BreakpointManager {
           created = new UserDefinedBreakpoint(
             this,
             ids[index],
-            params.source,
+            containedSource ?? params.source,
             bpParams,
             this.conditionFactory.getConditionFor(bpParams),
           );
@@ -630,6 +638,7 @@ export class BreakpointManager {
         result.new
           .filter(this._enabledFilter)
           .filter(bp => currentList?.includes(bp))
+          // .enable sets breakpoints via cdp
           .map(b => b.enable(thread)),
       );
 

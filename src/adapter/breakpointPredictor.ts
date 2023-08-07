@@ -6,13 +6,17 @@ import { promises as fs } from 'fs';
 import { inject, injectable } from 'inversify';
 import * as path from 'path';
 import { Event } from 'vscode';
+// import { ISourceMapMetadata } from '../common/sourceMaps/sourceMap';
+// import { ISourceMapFactory } from '../common/sourceMaps/sourceMapFactory';
+import { ISourceMapFactory, ISourceMapMetadata } from "../adapter/sources";
 import { EventEmitter } from '../common/events';
 import { OutFiles } from '../common/fileGlobList';
 import { ILogger, LogTag } from '../common/logging';
 import { fixDriveLetterAndSlashes } from '../common/pathUtils';
-import { ISourceMapMetadata } from '../common/sourceMaps/sourceMap';
-import { ISourceMapFactory } from '../common/sourceMaps/sourceMapFactory';
-import { ISearchStrategy, ISourcemapStreamOptions } from '../common/sourceMaps/sourceMapRepository';
+import {
+  ISearchStrategy,
+  ISourcemapStreamOptions
+} from '../common/sourceMaps/sourceMapRepository';
 import { ISourcePathResolver } from '../common/sourcePathResolver';
 import { getOptimalCompiledPosition, parseSourceMappingUrl } from '../common/sourceUtils';
 import * as urlUtils from '../common/urlUtils';
