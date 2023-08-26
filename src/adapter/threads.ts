@@ -25,7 +25,6 @@ import * as errors from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
 import { WebAssemblyFile } from '../dwarf/core/Source';
 import { DwarfDebugSymbolContainer } from '../dwarf/pkg';
-import { demangle } from '../dwarf/swift/demangle';
 import { NodeWorkerTarget } from '../targets/node/nodeWorkerTarget';
 import { ITarget } from '../targets/targets';
 import { IShutdownParticipants } from '../ui/shutdownParticipants';
@@ -45,18 +44,13 @@ import {
 } from '../dwarf/core/DebugCommand';
 
 import {
-  PausedDebugSessionState,
-  clearReplBuild,
-  compileReplCode,
-  evaluateRepl,
-  generateSwiftStackFrameCode2,
-  getReplFileId
+  PausedDebugSessionState
 } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 
-import { readFileSync, writeFileSync } from 'fs';
 import { sourceMapParseFailed } from '../dap/errors';
 
 
+import { demangle } from '../dwarf/swift/demangle';
 import {
   DwarfSourceMap,
   IPreferredUiLocation,
@@ -1138,10 +1132,16 @@ export class Thread implements IVariableStoreLocationProvider {
 
     let swiftVars = []
 
-    for(let frame of pausedDetails.stackTrace.frames){
-      if(!frame.locals) continue
-      swiftVars.push(...frame.locals)
-    }
+    // for(let frame of pausedDetails.stackTrace.frames){
+    //   if(!frame.locals) continue
+    //   swiftVars.push(...frame.locals)
+    // }
+
+    // let swiftVars = [
+    //   {name: 'aobj', displayName: 'aobj', type: 'Car', groupId: 1000, childGroupId: 10004, address: 1274724}
+    // ]
+
+    // pausedDetails.stackTrace.frames[0].locals = swiftVars
 
     repl: if(swiftVars.length){
       console.time("repl")
@@ -1164,7 +1164,7 @@ export class Thread implements IVariableStoreLocationProvider {
       }
 
       var replWasmB64 = readFileSync(`.repl/repl_temp${fileId}.wasm`, {encoding: 'base64'});
-      let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.cdp, pausedDetails.stackTrace.frames[0]?.callFrame.callFrameId);
+      let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.cdp, pausedDetails.stackTrace.frames[0]?.callFrame.callFrameId, fileId);
 
       clearReplBuild(`.repl/repl_temp${fileId}`)
 

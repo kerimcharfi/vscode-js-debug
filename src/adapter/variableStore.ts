@@ -16,7 +16,7 @@ import Dap from '../dap/api';
 import { IDapApi } from '../dap/connection';
 import * as errors from '../dap/errors';
 import { ProtocolError } from '../dap/protocolError';
-import { clearReplBuild, compileReplCode, evaluateRepl, generateSwiftChildrenDumpCode, getReplFileId } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
+import { compileReplCode, evaluateRepl, generateSwiftChildrenDumpCode, getReplFileId } from '../dwarf/core/DebugSessionState/PausedDebugSessionState';
 import * as objectPreview from './objectPreview';
 import { MapPreview, SetPreview } from './objectPreview/betterTypes';
 import { PreviewContextType } from './objectPreview/contexts';
@@ -850,6 +850,10 @@ class ObjectVariable extends Variable implements IMemoryReadable {
   }
 }
 
+function isPrimitive(type:string){
+  return ["UInt8", "Int8", "UInt16", "Int16", "Int32", "UInt32", "Int", "UInt", "Int64", "UInt64", "Float", "Double", "Bool"].find(el => el == type)
+}
+
 class DwarfObjectVariable implements IVariable {
   public id = getVariableId();
 
@@ -890,6 +894,7 @@ class DwarfObjectVariable implements IVariable {
   }
 
   public async getChildren(_params: Dap.VariablesParamsExtended) : Promise<IVariable[]>{
+    console.log("---Getting children @"+this.keyPath+"\n|")
     let result = [] as IVariable[]
     // adding .count property to collections, sets, dicts
     if(_params.filter != "indexed" && (this.kind === "collection" || this.kind === "set" || this.kind === "dictionary")){
@@ -904,6 +909,7 @@ class DwarfObjectVariable implements IVariable {
     }
     // if this has too many children, the paged mechanism is used
     if(this.kind === "collection" && this.countChildren > 100 && _params.start == undefined){
+      console.log("|\n---Got children @"+this.keyPath+"\n|")
       return result
     }
 
@@ -920,9 +926,9 @@ class DwarfObjectVariable implements IVariable {
     const args = [this.address || this.context.parent?.address || this.keyPathRoot?.address]
 
     var replWasmB64 = readFileSync(`.repl/repl_temp${fileId}.wasm`, {encoding: 'base64'});
-    let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.context.cdp);
+    let evalResult = await evaluateRepl(replWasmB64, args.join(", "), this.context.cdp, undefined, fileId);
 
-    clearReplBuild(`.repl/repl_temp${fileId}`)
+    // clearReplBuild(`.repl/repl_temp${fileId}`)
 
     let vars = []
     if(evalResult){
@@ -933,8 +939,10 @@ class DwarfObjectVariable implements IVariable {
       }
     }
 
-    if(!vars.length)
+    if(!vars.length){
+      console.log("|\n---Got children @"+this.keyPath+"\n|")
       return result
+    }
     let thisVariableDump = vars[0]
     this.address = thisVariableDump.address
 
@@ -977,7 +985,7 @@ class DwarfObjectVariable implements IVariable {
             child.type,
             undefined, // address
             child.value,
-            !!(child.value=='nil'),      //.isPrimitive
+            !!(child.value=='nil') || isPrimitive(child.type),      //.isPrimitive
             child.kind,
             child.countChildren,
             this.address ? this : this.keyPathRoot,
@@ -987,6 +995,7 @@ class DwarfObjectVariable implements IVariable {
       )
     }
 
+    console.log("|\n---Got children @"+this.keyPath+"\n|")
     return result
   }
 }

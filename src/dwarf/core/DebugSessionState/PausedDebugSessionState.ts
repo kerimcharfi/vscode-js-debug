@@ -4,7 +4,7 @@
 import { exec } from 'child_process';
 import type Protocol from 'devtools-protocol/types/protocol';
 import type ProtocolApi from 'devtools-protocol/types/protocol-proxy-api';
-import { copyFileSync, rmSync } from 'fs';
+import { copyFileSync, rmSync, writeFileSync } from 'fs';
 import { StackFrame } from '../../../adapter/stackTrace';
 import Cdp from '../../../cdp/api';
 import { getDeferred } from '../../../common/promiseUtil';
@@ -207,26 +207,29 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
       return;
     }
 
-    wasmVariable.evaluate()
+    // wasmVariable.evaluate()
 
     let limit = 0;
-    let address;
+    // let address;
 
+    let address = wasmVariable.address()
+
+    address = parseInt(address.split(",")[0].substring(8))
     //while ((expr == "myint" || expr == "size" || expr == "anotherint" || wasmVariable.is_required_memory_slice()) && limit < 2) {
-    while (wasmVariable.is_required_memory_slice() && limit < 20) {
-      const slice = wasmVariable.required_memory_slice();
-      address = slice.address
-      const result = await this.memoryEvaluator.evaluate(
-        stackFrame.callFrame.callFrameId,
-        slice.address,
-        slice.byte_size,
-      );
-      slice.set_memory_slice(new Uint8Array(result));
+    // while (wasmVariable.is_required_memory_slice() && limit < 20) {
+    //   const slice = wasmVariable.required_memory_slice();
+    //   address = slice.address
+    //   const result = await this.memoryEvaluator.evaluate(
+    //     stackFrame.callFrame.callFrameId,
+    //     slice.address,
+    //     slice.byte_size,
+    //   );
+    //   slice.set_memory_slice(new Uint8Array(result));
 
-      wasmVariable.resume_with_memory_slice(slice);
+    //   wasmVariable.resume_with_memory_slice(slice);
 
-      limit++;
-    }
+    //   limit++;
+    // }
 
     let evaluationResult
 
@@ -270,7 +273,7 @@ export class PausedDebugSessionState implements DebuggerWorkflowCommand, Debugge
     }
 
     const isPrimitive = [
-      "UInt8", "Int8", "UInt16", "Int16", "Int", "UInt", "Int64", "UInt64", "Float", "Double"
+      "UInt8", "Int8", "UInt16", "Int16", "Int32", "UInt32", "Int", "UInt", "Int64", "UInt64", "Float", "Double", "Bool"
     ].find(el => el == variable.type)
 
     return {
@@ -421,9 +424,13 @@ export function generateSwiftStackFrameCode2(vars, importDecl){
 
 export function compileReplCode(fileName: string, outFileName: string, INCLUDE_DIRS: string){
   let deferred = getDeferred()
-
+  // const swift = "/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc"
+  // const swift = "/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-08-17-a-no-runtime/usr/bin/swiftc"
+  const swift = "/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-08-22-b/usr/bin/swiftc"
+  const log_repl_build = false
+  const repl_build_log = log_repl_build ? "-Xlinker -mllvm -Xlinker -debug -Xlinker --threads=1 &> ${fileName}_build.log" : ""
   exec(
-    `/home/ubu/coding/tools/swift-wasm-DEVELOPMENT-SNAPSHOT-2023-06-03-a/usr/bin/swiftc -target wasm32-unknown-wasi ${fileName} -o ${outFileName} ${INCLUDE_DIRS} -suppress-warnings -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=25000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__wasm_call_ctors -Xlinker --export=repl -Xlinker --table-base=30000 -Xlinker --unresolved-symbols=import-dynamic -g -emit-module -emit-executable -Xlinker --export-dynamic`,
+    `${swift} -target wasm32-unknown-wasi ${fileName} -o ${outFileName} ${INCLUDE_DIRS} -Onone -suppress-warnings -Xfrontend -disable-access-control -Xlinker --experimental-pic -Xlinker --global-base=30000000 -Xlinker --import-table -Xlinker --import-memory -Xlinker --export=__wasm_call_ctors -Xlinker --export=__table_base -Xlinker --export=__stack_pointer -Xlinker --export=__data_end -Xlinker --export=repl -Xlinker --table-base=60000 -Xlinker --unresolved-symbols=import-dynamic -emit-module -emit-executable -Xlinker --export-dynamic -Xlinker -z -Xlinker stack-size=512000 ${repl_build_log}`,
     (error, stdout, stderr) => {
       if (error) {
         console.log(`error: ${error.message}`)
@@ -441,10 +448,14 @@ export function compileReplCode(fileName: string, outFileName: string, INCLUDE_D
   return deferred.promise
 }
 
-export async function evaluateRepl(replWasmB64: string, args: string, cdp: Cdp.Api, callFrameId?: string){
+let currentEvaluation = Promise.resolve(undefined)
+
+export async function evaluateRepl(replWasmB64: string, args: string, cdp: Cdp.Api, callFrameId?: string, fileId){
   console.time("evaluateOnCallFrame")
+  console.log("evaluating with args: ", args)
   const expression = `
   //let result = "[]"
+  console.log("<<<<<<<<<<<<<<<<<<<<<<<<<<< evaluate ${args}")
   try{
     const wasmB64 = '${replWasmB64}'
     let buf = window.base64ToArrayBuffer(wasmB64)
@@ -460,29 +471,40 @@ export async function evaluateRepl(replWasmB64: string, args: string, cdp: Cdp.A
     let result = JsString(ptr)
     //let result = JSON.parse(resultStr)
     //console.log(result)
+    console.log(">>>>>>>>>>>>>>>>>>>>>>>>>>> evaluate ${args} done")
     result
   } catch (e) {
     console.error(e)
     let result = "[]"
+    console.log(">>>>>>>>>>>>>>>>>>>>>>>>>>> evaluate ${args} done")
     result
   }
-
 `
-  let replExecution
-  if(callFrameId){
-    replExecution = await cdp.Debugger.evaluateOnCallFrame({
-      callFrameId,
-      expression,
-      returnByValue: true,
-    });
-  } else {
-    replExecution = await cdp.Runtime.evaluate({
-      expression,
-      returnByValue: true,
-    });
-  }
+
+  writeFileSync(`.repl/repl_temp${fileId}.js`, expression)
+
+  currentEvaluation = currentEvaluation.then(
+    ()=>{
+      if(callFrameId){
+        return cdp.Debugger.evaluateOnCallFrame({
+          callFrameId,
+          expression,
+          returnByValue: true,
+        });
+      } else {
+        return cdp.Runtime.evaluate({
+          expression,
+          returnByValue: true,
+        });
+      }
+    }
+  )
+
+  let replExecution  = await currentEvaluation
 
   let evalResult = replExecution?.result?.value;
+
+  console.log("done")
 
   console.timeEnd("evaluateOnCallFrame")
   return evalResult
@@ -607,8 +629,6 @@ export function generateSwiftChildrenDumpCode(vars, importDecl, params){
 
       result.children.append(dumpVariable(child.value, accessor))
     }
-
-
 
     return result
   }
